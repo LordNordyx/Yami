@@ -1,20 +1,24 @@
 diff --git a/meson.build b/meson.build
-index 2b3dc51..3d67e96 100644
+index 2b3dc51..38529e7 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -182,6 +182,21 @@ libmkxp = static_library(
+@@ -182,6 +182,25 @@ libmkxp = static_library(
      override_options: {'c_std': c_std, 'cpp_std': cpp_std},
  )
  
 +if host_system == 'android'
 +    # [yami] On Android the engine is loaded by SDLActivity as libmain.so
-+    shared_library(
-+        'main',
++    # Built as an executable target linked with -shared: meson's PIC check relies on
++    # CMake target metadata that is wrong for some vendored libs, while every object
++    # here is compiled with -fPIC (cross file). The real linker still verifies it.
++    executable(
++        'libmain',
++        name_suffix: 'so',
 +        sources: [git_hash_file],
 +        link_whole: libmkxp,
 +        dependencies: global_dependencies,
 +        include_directories: global_include_dirs,
-+        link_args: global_link_args + ['-Wl,-soname,libmain.so', '-llog', '-landroid', '-lGLESv2', '-lEGL', '-lOpenSLES'],
++        link_args: global_link_args + ['-shared', '-Wl,-soname,libmain.so', '-Wl,--no-undefined', '-llog', '-landroid', '-lGLESv2', '-lEGL', '-lOpenSLES'],
 +        override_options: {'c_std': c_std, 'cpp_std': cpp_std},
 +        install: true,
 +        install_dir: '.',
@@ -24,7 +28,7 @@ index 2b3dc51..3d67e96 100644
  executable(
      exe_name,
      sources: [
-@@ -198,6 +213,7 @@ executable(
+@@ -198,6 +217,7 @@ executable(
      install_dir: '.',
      install_tag: meson.project_name(),
  )
@@ -259,6 +263,33 @@ index 3345468..37fdb8f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
+diff --git a/src/meson.build b/src/meson.build
+index 4057c6b..c0d7afe 100755
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -1043,7 +1043,7 @@ if not sdl2_image.found()
+         'SDL2IMAGE_PNG_SAVE': true,
+         'SDL2IMAGE_PNG_SHARED': false,
+         'SDL2IMAGE_JPG_SHARED': false,
+-        'SDL2IMAGE_JXL': true,
++        'SDL2IMAGE_JXL': host_system != 'android', # [yami] libjxl builds non-PIC; RGSS games don't use JXL
+         'SDL2IMAGE_JXL_SHARED': false,
+         'SDL2IMAGE_VENDORED': true,
+         'SDL2IMAGE_SAMPLES': false,
+@@ -1062,11 +1062,12 @@ if not sdl2_image.found()
+     sdl2_image = declare_dependency(dependencies: [
+         sdl2,
+         cmake.subproject('sdl2_image', options: sdl2_image_options).dependency('SDL2_image'),
++    ] + (host_system == 'android' ? [] : [
+         cmake.subproject('sdl2_image', options: sdl2_image_options).dependency('brotlicommon-static'),
+         cmake.subproject('sdl2_image', options: sdl2_image_options).dependency('brotlidec-static'),
+         cmake.subproject('sdl2_image', options: sdl2_image_options).dependency('hwy'),
+         cmake.subproject('sdl2_image', options: sdl2_image_options).dependency('jxl_dec-static'),
+-    ])
++    ]))
+     meson.override_dependency('SDL2_image', sdl2_image, static: true)
+ endif
+ global_dependencies += sdl2_image
 diff --git a/subprojects/common/sonametool.py b/subprojects/common/sonametool.py
 index 971cda7..53cc633 100644
 --- a/subprojects/common/sonametool.py
