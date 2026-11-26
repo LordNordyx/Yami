@@ -117,8 +117,9 @@ object EngineConfig {
 
         m["RTP"] = JsonArray(app.rtpPaths.filter { File(it).isDirectory }.map { JsonPrimitive(it) })
 
-        // Win32API emulation: RMXP games (older Essentials) call Windows DLLs at load.
-        val pre = mutableListOf(rt.script("yami_runtime.rb"), rt.script("yami_win32.rb"))
+        // Ruby 1.8 compatibility (scripts written for RMXP's Ruby) and Win32API
+        // emulation (older Essentials calls Windows DLLs at load).
+        val pre = mutableListOf(rt.script("yami_runtime.rb"), rt.script("yami_ruby18.rb"), rt.script("yami_win32.rb"))
         if (optimizeMode) pre += rt.script("yami_optimizer.rb")
         m["preloadScript"] = JsonArray(pre.map { JsonPrimitive(it.absolutePath) })
         return m

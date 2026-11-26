@@ -1,3 +1,56 @@
+diff --git a/binding/binding-mri.cpp b/binding/binding-mri.cpp
+index b6344f9..fe5f62e 100644
+--- a/binding/binding-mri.cpp
++++ b/binding/binding-mri.cpp
+@@ -845,6 +845,34 @@ static VALUE evalString(VALUE string, VALUE filename, int *state) {
+     return rb_protect((VALUE(*)(VALUE))evalHelper, (VALUE)&arg, state);
+ }
+ 
++/* [yami] Ruby 1.8 compatibility: RGSS1 games were written for Ruby 1.8. When a
++ * script fails to compile, give Yami.fix_script(source, name, message) a chance
++ * to translate it; a SyntaxError means nothing in the script ran, so retrying
++ * is safe. Returns the translated source, or Qnil to keep the original error. */
++static VALUE yamiFixHelper(VALUE args) {
++    VALUE *a = (VALUE*)args;
++    return rb_funcall(a[0], rb_intern("fix_script"), 3, a[1], a[2], a[3]);
++}
++
++static VALUE yamiFixScript(VALUE src, VALUE fname) {
++    VALUE err = rb_errinfo();
++    if (NIL_P(err) || !rb_obj_is_kind_of(err, rb_eSyntaxError))
++        return Qnil;
++    if (!rb_const_defined(rb_cObject, rb_intern("Yami")))
++        return Qnil;
++    VALUE mod = rb_const_get(rb_cObject, rb_intern("Yami"));
++    if (!rb_respond_to(mod, rb_intern("fix_script")))
++        return Qnil;
++    VALUE a[4] = {mod, src, fname, rb_funcall(err, rb_intern("message"), 0)};
++    int st = 0;
++    VALUE fixed = rb_protect(yamiFixHelper, (VALUE)a, &st);
++    if (st || !RB_TYPE_P(fixed, T_STRING)) {
++        rb_set_errinfo(err); /* keep the original error for the message box */
++        return Qnil;
++    }
++    return fixed;
++}
++
+ static void runCustomScript(const std::string &filename) {
+     std::string scriptData;
+     
+@@ -1099,6 +1127,13 @@ static void runRMXPScripts(BacktraceData &btData) {
+             int state;
+             
+             evalString(string, fname, &state);
++            if (state) {
++                VALUE fixed = yamiFixScript(string, fname);
++                if (!NIL_P(fixed)) {
++                    rb_set_errinfo(Qnil);
++                    evalString(fixed, fname, &state);
++                }
++            }
+             if (state)
+                 break;
+         }
 diff --git a/meson.build b/meson.build
 index 2b3dc51..c36a03d 100644
 --- a/meson.build

@@ -27,6 +27,9 @@ for args in "full xp" "full ess" "panoramic ess"; do
   mkdir -p "$TMP/w"; WORK="$TMP/w" ruby "$HERE/ruby/wide.rb" $args | grep -v '^\[yami\]'
 done
 
+echo "== Ruby 1.8 compatibility"
+( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/ruby18.rb" | grep -v '^\[yami' )
+
 echo "== Win32API compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/win32.rb" | grep -v '^\[yami' )
 
