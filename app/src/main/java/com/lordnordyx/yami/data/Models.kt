@@ -78,8 +78,9 @@ data class GameSettings(
     // Performance
     val mapCache: Boolean = true,
     val mapCacheMb: Int = 192,
-    val optimizedMaps: Boolean = true,
-    val warmGraphics: Boolean = true,
+    /** Experimental: rewrites tileset ids per map; opt-in only. */
+    val optimizedMaps: Boolean = false,
+    val warmGraphics: Boolean = false,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,
@@ -131,6 +132,9 @@ data class Game(
 
 @Serializable
 data class AppSettings(
+    /** Bumped when defaults change in a way stored settings must follow (see GameRepository.migrate).
+     *  Files written before this field existed decode as 1. */
+    val schema: Int = 1,
     val libraryView: LibraryView = LibraryView.COVERS,
     val sort: LibrarySort = LibrarySort.RECENT,
     val hideFromGallery: Boolean = true,
@@ -141,7 +145,9 @@ data class AppSettings(
     val amoled: Boolean = true,
     val optimizeOnImport: Boolean = true,
     val haptics: Boolean = true,
-)
+) {
+    companion object { const val SCHEMA = 2 }
+}
 
 @Serializable enum class LibraryView { COVERS, GRID, LIST }
 @Serializable enum class LibrarySort(val label: String) {

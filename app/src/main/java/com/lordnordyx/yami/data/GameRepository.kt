@@ -13,7 +13,8 @@ import kotlinx.serialization.json.Json
 import java.io.File
 
 /** Single source of truth for the library. Persisted as JSON in app storage. */
-class GameRepository(private val context: Context) {
+/** @param owner true in the library process; the engine process only reads. */
+class GameRepository(private val context: Context, private val owner: Boolean = true) {
 
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true; prettyPrint = true }
     private val libFile get() = File(context.filesDir, "library.json")
@@ -35,11 +36,30 @@ class GameRepository(private val context: Context) {
 
     private fun load() {
         runCatching { _games.value = json.decodeFromString(libFile.readText()) }
+        val hadSettings = settingsFile.exists()
         runCatching { _settings.value = json.decodeFromString(settingsFile.readText()) }
+        if (!hadSettings) _settings.value = _settings.value.copy(schema = AppSettings.SCHEMA)
+        else if (owner && _settings.value.schema < AppSettings.SCHEMA) migrate(_settings.value.schema)
+    }
+
+    /**
+     * Settings files store every value, so changed defaults must be applied here.
+     * v2: experimental optimized maps and graphics warm-up off by default (they
+     * slowed or broke first launches of games on SD cards).
+     */
+    private fun migrate(from: Int) {
+        if (from < 2) {
+            fun GameSettings.v2() = copy(optimizedMaps = false, warmGraphics = false)
+            _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v2())
+            _games.value = _games.value.map { it.copy(settings = it.settings.v2()) }
+        }
+        _settings.value = _settings.value.copy(schema = AppSettings.SCHEMA)
+        persist()
     }
 
     @Synchronized
     private fun persist() {
+        if (!owner) return
         atomicWrite(libFile, json.encodeToString(_games.value))
         atomicWrite(settingsFile, json.encodeToString(_settings.value))
     }

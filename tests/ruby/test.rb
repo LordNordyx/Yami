@@ -55,7 +55,7 @@ check "atlas tile 2 copied from id 684 source rect", atlas[2][2] == [64, 0, (684
 File.write(cfg, "mode=play\nmap_cache=true\nmap_cache_mb=64\noptimized_maps=true\nwidescreen=off\nturbo_mode=hybrid\nturbo_speed=3\nturbo_toggle=true\nturbo_scancode=67\nredirect_saves=true\nsave_dir=#{WORK}/saves\nstatus_file=#{WORK}/status.txt\n")
 FileUtils.mkdir_p(WORK + "/saves")
 load "#{SCRIPTS}/yami_runtime.rb"
-sleep 0.3 # let cache thread run
+180.times { Graphics.update }; sleep 0.3 # cache starts after boot frames
 orig1 = Marshal.load(File.binread("Data/Map001.rxdata"))
 m1 = load_data("Data/Map001.rxdata")
 tsets = load_data("Data/Tilesets.rxdata")

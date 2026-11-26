@@ -598,7 +598,7 @@ end
 if Yami.flag("warm_graphics") && Yami.cfg("mode") != "optimize"
   Thread.new do
     begin
-      sleep 1.5
+      sleep 0.5 until ($yami_boot_frames || 0) >= 300
       budget = 256 * 1024 * 1024
       used = 0
       %w[Tilesets Autotiles Characters Panoramas Fogs].each do |sub|
@@ -618,7 +618,11 @@ end
 
 unless Yami.cfg("mode") == "optimize"
   Yami::OptMaps.load_manifest
-  Yami::MapCache.start
+  # Stream maps only once the game is up, so it never competes with boot I/O
+  # (games on SD cards go through a slow FUSE layer).
+  $yami_boot_frames = 0
+  Yami.on_tick { $yami_boot_frames += 1 }
+  Yami.once_when(-> { $yami_boot_frames >= 180 }) { Yami::MapCache.start }
 end
 Yami.status("turbo", 0)
 Yami.log("runtime #{Yami::VERSION} ready (rgss #{Yami.rgss}, widescreen=#{Yami::Wide.mode})")

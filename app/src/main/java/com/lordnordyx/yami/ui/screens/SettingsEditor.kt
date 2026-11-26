@@ -64,7 +64,7 @@ fun SettingsEditor(vm: LibraryViewModel, s: GameSettings, onChange: ((GameSettin
         Section("Performance") {
             SwitchRow("Stream maps into RAM", s.mapCache, "Map transfers decode from memory instead of storage") { v -> onChange { it.copy(mapCache = v) } }
             if (s.mapCache) SliderRow("Map cache budget", s.mapCacheMb.toFloat(), 32f..512f, format = { "${it.toInt()} MB" }) { v -> onChange { it.copy(mapCacheMb = v.toInt()) } }
-            SwitchRow("Optimized maps", s.optimizedMaps, "Per-map compact tilesets for oversized tilesets (RMXP)") { v -> onChange { it.copy(optimizedMaps = v) } }
+            SwitchRow("Optimized maps (experimental)", s.optimizedMaps, "Per-map compact tilesets for huge tilesets (RMXP). Some scripted games break — off by default") { v -> onChange { it.copy(optimizedMaps = v) } }
             SwitchRow("Warm up graphics", s.warmGraphics, "Pre-reads tilesets and characters in the background") { v -> onChange { it.copy(warmGraphics = v) } }
             SwitchRow("VSync", s.vsync) { v -> onChange { it.copy(vsync = v) } }
             SwitchRow("Frame skip when slow", s.frameSkip) { v -> onChange { it.copy(frameSkip = v) } }

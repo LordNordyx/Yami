@@ -78,7 +78,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     override fun getArguments(): Array<String> = emptyArray()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        repo = GameRepository(applicationContext)
+        repo = GameRepository(applicationContext, owner = false)
         val id = intent.getStringExtra(EXTRA_GAME_ID)
         game = id?.let { repo.game(it) }
         optimizeMode = intent.getBooleanExtra(EXTRA_OPTIMIZE, false)
