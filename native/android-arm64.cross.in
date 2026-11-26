@@ -32,6 +32,11 @@ CMAKE_SYSTEM_VERSION = '@API@'
 CMAKE_ANDROID_ARCH_ABI = 'arm64-v8a'
 CMAKE_ANDROID_NDK = '@NDK@'
 CMAKE_ANDROID_STL_TYPE = 'c++_static'
+# Variables normally set by the NDK toolchain file; libjxl/sjpeg/highway read them.
+ANDROID_ABI = 'arm64-v8a'
+ANDROID_PLATFORM = 'android-@API@'
+ANDROID_NDK = '@NDK@'
+CMAKE_POSITION_INDEPENDENT_CODE = 'ON'
 
 [host_machine]
 system = 'android'
