@@ -87,11 +87,21 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             finish()
             return
         }
+        CrashReports.beginSession(this, g.id, g.title)
         settings = repo.effectiveSettings(g)
         inputConfig = InputConfig.load(this)
 
         if (!optimizeMode) runCatching { SaveManager(this, repo).snapshot(g) }
-        val prepared = EngineConfig.prepare(this, repo, g, displayAspect(), optimizeMode)
+        val prepared = try {
+            EngineConfig.prepare(this, repo, g, displayAspect(), optimizeMode)
+        } catch (t: Throwable) {
+            // Report it in the library instead of dying silently.
+            runCatching { java.io.File(filesDir, "logs/java-crash.txt").writeText("Preparing the game failed\n${t.stackTraceToString()}") }
+            super.onCreate(savedInstanceState)
+            Toast.makeText(this, "Couldn't start the game: ${t.message}", Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
 
         // Everything the native side reads at startup goes through the environment,
         // which must be set before SDLActivity loads libmain and starts SDL_main.
@@ -273,6 +283,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     private fun restart() {
         val id = game?.id ?: return
         recordSession()
+        CrashReports.endSession(this)
         startActivity(Intent(this, MainActivity::class.java)
             .putExtra(MainActivity.EXTRA_RELAUNCH, id)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
@@ -281,6 +292,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
 
     private fun quitToLibrary() {
         recordSession()
+        CrashReports.endSession(this)
         runCatching { SDLActivity.nativeSendQuit() }
         // Give RGSS a moment to unwind cleanly, then make sure the process is gone.
         Handler(Looper.getMainLooper()).postDelayed({ hardExit() }, 1500)
@@ -319,6 +331,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
 
     override fun onDestroy() {
         recordSession()
+        // Reached on a normal exit (game called exit, or we finished); a crash never gets here.
+        if (isFinishing) CrashReports.endSession(this)
         status?.stop()
         runCatching { (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this) }
         super.onDestroy()

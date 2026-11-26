@@ -54,6 +54,8 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     data class Busy(val title: String, val detail: String = "", val fraction: Float = -1f)
     val busy = MutableStateFlow<Busy?>(null)
     val message = MutableStateFlow<String?>(null)
+    /** Report of a crashed game session, shown once when returning to the library. */
+    val crashReport = MutableStateFlow<String?>(null)
     private var job: Job? = null
 
     // Engine round-trips (optimizer run, then the game itself)
@@ -122,6 +124,9 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
 
     fun onReturnFromEngine() {
         repo.absorbStats()
+        viewModelScope.launch(Dispatchers.IO) {
+            com.lordnordyx.yami.player.CrashReports.collect(getApplication<Application>())?.let { crashReport.value = it }
+        }
         val p = pending ?: return
         val g = repo.game(p.gameId) ?: run { pending = null; return }
         // The optimizer engine process may still be writing; give it a moment.
@@ -168,6 +173,17 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun updateApp(f: (AppSettings) -> AppSettings) = repo.updateSettings(f)
     fun remove(id: String, deleteFiles: Boolean) = viewModelScope.launch { repo.remove(id, deleteFiles) }
+
+    fun showLastCrashReport() {
+        val ctx = getApplication<Application>()
+        val f = com.lordnordyx.yami.player.CrashReports.lastReport(ctx)
+        val log = com.lordnordyx.yami.player.CrashReports.engineLog(ctx)
+        crashReport.value = when {
+            f.exists() -> f.readText()
+            log.exists() -> "Last engine output:\n\n" + log.readLines().takeLast(200).joinToString("\n")
+            else -> "No crash report or engine log yet."
+        }
+    }
 
     fun shaders() = RuntimeAssets.shaders(getApplication<Application>(), repo)
 

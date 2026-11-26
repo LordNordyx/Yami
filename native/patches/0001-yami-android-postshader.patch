@@ -267,6 +267,117 @@ index 3345468..37fdb8f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
+diff --git a/src/main.cpp b/src/main.cpp
+index af81d66..95cf26e 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -240,7 +240,92 @@ static SDL_Window *initVideo(const Config &conf) {
+   return window;
+ }
+ 
++#ifdef __ANDROID__
++/* [yami] Crash reporter: on a fatal signal, write the signal, fault address
++ * and a backtrace (module + offset, symbol when exported) to $YAMI_CRASH_FILE,
++ * then let the default handler finish. Yami shows it on the next start. */
++#include <android/log.h>
++#include <dlfcn.h>
++#include <fcntl.h>
++#include <signal.h>
++#include <unwind.h>
++#include <initializer_list>
++#include <cstdio>
++#include <cstdlib>
++
++namespace {
++int yamiCrashFd = -1;
++struct sigaction yamiOldActions[NSIG];
++
++struct YamiUnwindState { void **cur; void **end; };
++
++_Unwind_Reason_Code yamiUnwindCb(struct _Unwind_Context *ctx, void *arg) {
++    YamiUnwindState *st = static_cast<YamiUnwindState*>(arg);
++    uintptr_t pc = _Unwind_GetIP(ctx);
++    if (pc) {
++        if (st->cur == st->end) return _URC_END_OF_STACK;
++        *st->cur++ = reinterpret_cast<void*>(pc);
++    }
++    return _URC_NO_REASON;
++}
++
++void yamiWrite(const char *s) {
++    if (yamiCrashFd >= 0) { ssize_t r = write(yamiCrashFd, s, strlen(s)); (void)r; }
++    __android_log_write(ANDROID_LOG_FATAL, "yami-crash", s);
++}
++
++void yamiCrashHandler(int sig, siginfo_t *info, void *uctx) {
++    char line[512];
++    snprintf(line, sizeof(line), "signal %d (%s) code %d fault addr %p\n",
++             sig, strsignal(sig), info ? info->si_code : 0, info ? info->si_addr : nullptr);
++    yamiWrite(line);
++
++    void *frames[64];
++    YamiUnwindState st{frames, frames + 64};
++    _Unwind_Backtrace(yamiUnwindCb, &st);
++    for (void **f = frames; f < st.cur; ++f) {
++        Dl_info di{};
++        if (dladdr(*f, &di) && di.dli_fname) {
++            const char *mod = strrchr(di.dli_fname, '/');
++            uintptr_t off = (uintptr_t)*f - (uintptr_t)di.dli_fbase;
++            snprintf(line, sizeof(line), "  #%02d pc %08zx  %s (%s+%zu)\n", (int)(f - frames), (size_t)off,
++                     mod ? mod + 1 : di.dli_fname, di.dli_sname ? di.dli_sname : "?",
++                     di.dli_saddr ? (size_t)((uintptr_t)*f - (uintptr_t)di.dli_saddr) : 0);
++        } else {
++            snprintf(line, sizeof(line), "  #%02d pc %p\n", (int)(f - frames), *f);
++        }
++        yamiWrite(line);
++    }
++    if (yamiCrashFd >= 0) fsync(yamiCrashFd);
++
++    /* chain to the previous (system) handler so tombstones still work */
++    sigaction(sig, &yamiOldActions[sig], nullptr);
++    raise(sig);
++}
++
++void yamiInstallCrashHandler() {
++    const char *path = getenv("YAMI_CRASH_FILE");
++    if (path && *path)
++        yamiCrashFd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++    static char altstack[64 * 1024];
++    stack_t ss{};
++    ss.ss_sp = altstack;
++    ss.ss_size = sizeof(altstack);
++    sigaltstack(&ss, nullptr);
++    struct sigaction sa{};
++    sa.sa_sigaction = yamiCrashHandler;
++    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
++    sigemptyset(&sa.sa_mask);
++    for (int sig : {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE, SIGTRAP})
++        sigaction(sig, &sa, &yamiOldActions[sig]);
++}
++} // namespace
++#endif
++
+ int main(int argc, char *argv[]) {
++#ifdef __ANDROID__
++    yamiInstallCrashHandler();
++#endif
+     SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "0");
+     SDL_SetHint(SDL_HINT_ACCELEROMETER_AS_JOYSTICK, "0");
+ 
+@@ -705,7 +790,13 @@ int main(int argc, char *argv[]) {
+ #endif
+ 
+     /* Start RGSS thread */
++#ifdef __ANDROID__
++    /* [yami] Android threads default to ~1 MB of stack (desktop Linux: 8 MB); the Ruby VM
++     * parsing large script sets (Pokemon Essentials) overflows that and dies silently. */
++    SDL_Thread *rgssThread = SDL_CreateThreadWithStackSize(rgssThreadFun, "rgss", 16 * 1024 * 1024, &rtData);
++#else
+     SDL_Thread *rgssThread = SDL_CreateThread(rgssThreadFun, "rgss", &rtData);
++#endif
+ 
+     /* Start event processing */
+     eventThread.process(rtData);
 diff --git a/src/meson.build b/src/meson.build
 index 4057c6b..e68be6a 100755
 --- a/src/meson.build

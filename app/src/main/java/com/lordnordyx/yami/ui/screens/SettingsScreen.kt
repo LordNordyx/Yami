@@ -43,6 +43,8 @@ private val ACCENTS = listOf(0xFF7C5CFF, 0xFF38E1C5, 0xFFFF5C8A, 0xFFFFB020, 0xF
 @Composable
 fun SettingsScreen(vm: LibraryViewModel, back: () -> Unit, openControls: () -> Unit) {
     val s by vm.settings.collectAsState()
+    val crash by vm.crashReport.collectAsState()
+    com.lordnordyx.yami.ui.CrashDialog(crash) { vm.crashReport.value = null }
     val scope = rememberCoroutineScope()
     val pickRtp = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { it?.let(vm::addRtp) }
     val pickShader = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { it?.let(vm::importShader) }
@@ -92,6 +94,9 @@ fun SettingsScreen(vm: LibraryViewModel, back: () -> Unit, openControls: () -> U
             modifier = Modifier.padding(start = 20.dp, top = 16.dp))
         SettingsEditor(vm, s.defaults) { f -> vm.updateApp { it.copy(defaults = f(it.defaults)) } }
 
+        Section("Troubleshooting") {
+            ActionRow("Last crash report / engine log", "Copy or share it when reporting a problem") { vm.showLastCrashReport() }
+        }
         Section("About") {
             ActionRow("Yami", "RGSS player for Android, built on mkxp-z", value = BuildConfig.VERSION_NAME)
         }

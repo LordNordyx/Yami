@@ -69,6 +69,7 @@ import com.lordnordyx.yami.data.Game
 import com.lordnordyx.yami.data.LibrarySort
 import com.lordnordyx.yami.data.LibraryView
 import com.lordnordyx.yami.ui.BusyOverlay
+import com.lordnordyx.yami.ui.CrashDialog
 import com.lordnordyx.yami.ui.Cover
 import com.lordnordyx.yami.ui.LibraryViewModel
 import com.lordnordyx.yami.ui.formatPlaytime
@@ -83,6 +84,7 @@ fun LibraryScreen(vm: LibraryViewModel, openGame: (String) -> Unit, openSettings
     val busy by vm.busy.collectAsState()
     val msg by vm.message.collectAsState()
     val query by vm.query.collectAsState()
+    val crash by vm.crashReport.collectAsState()
     val snack = remember { SnackbarHostState() }
     var addMenu by remember { mutableStateOf(false) }
     var sortMenu by remember { mutableStateOf(false) }
@@ -176,6 +178,7 @@ fun LibraryScreen(vm: LibraryViewModel, openGame: (String) -> Unit, openSettings
                 }
             }
             BusyOverlay(busy, vm::cancel)
+            CrashDialog(crash) { vm.crashReport.value = null }
         }
     }
 }
