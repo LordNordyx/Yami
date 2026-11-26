@@ -264,9 +264,18 @@ index 3345468..37fdb8f 100644
          GLMeta::blitSource(source, scaleIsSpecial);
  
 diff --git a/src/meson.build b/src/meson.build
-index 4057c6b..c0d7afe 100755
+index 4057c6b..e68be6a 100755
 --- a/src/meson.build
 +++ b/src/meson.build
+@@ -486,7 +486,7 @@ else
+     have_angle = false
+     sdl2_includes = ['-I' + sdl2.get_variable(pkgconfig: 'includedir'), '-I' + (sdl2.get_variable(pkgconfig: 'includedir') / 'SDL2')]
+ endif
+-global_dependencies += [sdl2main, sdl2]
++global_dependencies += host_system == 'android' ? [sdl2] : [sdl2main, sdl2] # [yami] SDLActivity calls SDL_main directly
+ 
+ have_alsa = false
+ have_jack = false
 @@ -1043,7 +1043,7 @@ if not sdl2_image.found()
          'SDL2IMAGE_PNG_SAVE': true,
          'SDL2IMAGE_PNG_SHARED': false,
