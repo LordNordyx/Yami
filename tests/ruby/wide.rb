@@ -128,6 +128,34 @@ elsif kind == "resizer"
   want = mode == "off" ? [640, 480] : [852, 480]
   check "options menu / resize_screen keep the right size", [Graphics.yami_native_width, Graphics.yami_native_height] == want
   check "factor stays 1", $ResizeFactor == 1.0
+elsif kind == "midload"
+  # Essentials calls Graphics.update while its scripts are still loading:
+  # Game_Map/Game_Player exist, but nothing that identifies Essentials yet.
+  class Game_Map; attr_accessor :display_x; def scroll_right(d); :essentials_own; end; end
+  class Game_Player; def center(x, y); :essentials_own; end; end
+  ok = begin; Graphics.update; true; rescue NameError => e; puts e.message; false; end
+  check "early frame during script loading doesn't crash", ok
+  DEFAULTSCREENWIDTH = 640
+  DEFAULTSCREENHEIGHT = 480
+  BORDERWIDTH = 80
+  BORDERHEIGHT = 60
+  module PBSpecies; end
+  def pbSetResizeFactor(f = 1, n = false); Graphics.oldresizescreen(800, 600); end
+  module Graphics
+    @@width = DEFAULTSCREENWIDTH; @@height = DEFAULTSCREENHEIGHT
+    class << self
+      alias oldresizescreen resize_screen
+      def width; @@width; end; def height; @@height; end
+    end
+  end
+  pbSetResizeFactor(1)
+  ok = begin; Graphics.update; Game_Player.new.center(5, 5); true; rescue NameError => e; puts e.message; false; end
+  check "Essentials camera untouched, no NameError", ok && Game_Player.new.center(0, 0) == :essentials_own
+  check "map scrolling untouched", Game_Map.new.scroll_right(1) == :essentials_own
+  nw = mode == "off" ? 640 : 852
+  check "screen fixed once the resizer appears", Graphics.yami_native_width == nw && Graphics.yami_native_height == 480
+  check "Graphics.width as the game should see it", Graphics.width == (mode == "full" ? 852 : 640) && Graphics.height == 480
+  check "base is the game's 640x480", mode == "off" || Yami::Wide.base == [640, 480]
 else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)

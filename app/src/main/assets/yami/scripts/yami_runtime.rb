@@ -544,12 +544,14 @@ module Yami
       end
       set_const(:DEFAULTSCREENWIDTH, gw)
       pbSetResizeFactor(1) rescue nil
+      Yami::Wide.claim! if defined?(Yami::Wide)
       Yami.log("older Essentials screen: #{w}x#{h} -> #{tw}x#{th}, border off, factor 1")
     end
   end
 end
-# After the scripts are loaded (the resizer may come after Game_Map).
-Yami.once_when(-> { defined?(Game_Map) && (Yami::OldEss.resizer? || ($yami_boot_frames || 0) > 2) }) { Yami::OldEss.apply }
+# Essentials draws frames while its scripts are still loading, so keep looking
+# until the resizer exists (a cheap method lookup per frame).
+Yami.on_tick { Yami::OldEss.apply unless Yami::OldEss.active? }
 
 # =============================================================================
 #  Widescreen
@@ -577,6 +579,25 @@ module Yami
       def base_w; (@base || [real_w])[0]; end
       def margin; panoramic? ? (real_w - base_w) / 2 : 0; end
       def map_ctx?; @ctx > 0; end
+
+      # Older Essentials keeps the size in DEFAULTSCREENWIDTH and may redefine
+      # Graphics.width/height in Ruby — possibly after this runtime started.
+      # Report the real size to it (full mode). Cheap; runs every frame.
+      def claim!
+        return if !on? || panoramic?
+        rw = Graphics.yami_width
+        if Object.const_defined?(:DEFAULTSCREENWIDTH) && DEFAULTSCREENWIDTH != rw
+          Yami::OldEss.base # remember the game's own size first
+          Yami::OldEss.set_const(:DEFAULTSCREENWIDTH, rw)
+        end
+        %i[width height].each do |m|
+          loc = (Graphics.method(m).source_location rescue nil)
+          next unless loc && !loc[0].to_s.include?("yami_")
+          native = m == :width ? :yami_width : :yami_height
+          Graphics.define_singleton_method(m) { send(native) }
+          Yami.log("widescreen: game redefined Graphics.#{m}; reporting the real #{m}")
+        end
+      end
     end
   end
 
@@ -602,12 +623,15 @@ if Yami::Wide.on?
 
   # Widen the default resolution right away (RMXP games never call resize_screen).
   Graphics.resize_screen(Graphics.yami_width, Graphics.height)
+  Yami.on_tick { Yami::Wide.claim! }
 
   # --- full-screen viewports ----------------------------------------------------
   class Viewport
     alias_method :yami_vp_init, :initialize
     def initialize(*a)
       Yami.run_once unless Yami.once_pending.zero?
+      Yami::OldEss.apply unless Yami::OldEss.active?
+      Yami::Wide.claim!
       # Normalise Viewport.new(rect) here. Never re-dispatch to `initialize`:
       # a game subclass may override it and hand a Rect back to super, which
       # would recurse forever (stack overflow seen with Pokémon Essentials).
@@ -666,18 +690,7 @@ if Yami::Wide.on?
 
     # Older Essentials (v15-v18): screen size lives in top-level constants, and
     # its Sprite_Resizer may redefine Graphics.width/height in Ruby.
-    if !Yami::Wide.panoramic?
-      if Object.const_defined?(:DEFAULTSCREENWIDTH) && !Yami::OldEss.active?
-        silence.call { Object.send(:remove_const, :DEFAULTSCREENWIDTH); Object.const_set(:DEFAULTSCREENWIDTH, rw) }
-      end
-      %i[width height].each do |m|
-        loc = (Graphics.method(m).source_location rescue nil)
-        next unless loc && !loc[0].to_s.include?("yami_")
-        native = m == :width ? :yami_width : :yami_height
-        Graphics.define_singleton_method(m) { send(native) }
-        Yami.log("widescreen: game redefined Graphics.#{m}; reporting the real #{m}")
-      end
-    end
+    Yami::Wide.claim!
 
     if essentials
       if !Yami::Wide.panoramic?
@@ -692,8 +705,10 @@ if Yami::Wide.on?
       end
     elsif essentials_old
       # Its camera reads Graphics.width (now the real width) — nothing to patch.
-    else
-      # Stock RMXP camera assumes a 20x15 tile screen.
+    elsif Game_Player.const_defined?(:CENTER_X) && Game_Player.const_defined?(:CENTER_Y)
+      # Stock RMXP camera assumes a 20x15 tile screen. (Only games that still
+      # have it: this hook can run while Essentials is loading, before
+      # anything identifies it as Essentials.)
       if Game_Player.const_defined?(:CENTER_X)
         silence.call do
           Game_Player.send(:remove_const, :CENTER_X)

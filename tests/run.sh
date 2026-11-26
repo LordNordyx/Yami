@@ -22,7 +22,7 @@ PY
 
 echo "== Ruby runtime & optimizer"
 RPG1="$TMP/rpg1.rb" WORK="$TMP/rt" ruby "$HERE/ruby/test.rb" | grep -v '^\[yami\]'
-for args in "full xp" "full ess" "full oldess" "panoramic ess" "full resizer" "off resizer" "panoramic resizer"; do
+for args in "full xp" "full ess" "full oldess" "panoramic ess" "full resizer" "off resizer" "panoramic resizer" "full midload" "panoramic midload" "off midload"; do
   echo "== widescreen $args"
   mkdir -p "$TMP/w"; WORK="$TMP/w" ruby "$HERE/ruby/wide.rb" $args | grep -v '^\[yami\]'
 done
