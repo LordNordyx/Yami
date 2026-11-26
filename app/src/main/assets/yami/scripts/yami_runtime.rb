@@ -75,6 +75,7 @@ module Yami
   @once_hooks = []
 
   def on_tick(&b); @tick_hooks << b; end
+  def once_pending; @once_hooks.size; end
   def once_when(cond, &b); @once_hooks << [cond, b]; end
 
   def tick
@@ -87,14 +88,22 @@ module Yami
   # Graphics.update).
   def run_once
     return if @once_hooks.empty? || @running_once
-    @running_once = true
-    @once_hooks.reject! do |cond, b|
-      next false unless (cond.call rescue false)
-      begin; b.call; rescue StandardError => e; log("once hook: #{e.class}: #{e.message}"); end
-      true
+    begin
+      @running_once = true
+      ready = @once_hooks.select { |cond, _| (cond.call rescue false) }
+      # Remove before running: a hook can never run twice, even if its body
+      # creates objects that call back into run_once.
+      @once_hooks -= ready
+      ready.each do |_, b|
+        begin
+          b.call
+        rescue StandardError => e
+          log("once hook: #{e.class}: #{e.message}")
+        end
+      end
+    ensure
+      @running_once = false
     end
-  ensure
-    @running_once = false
   end
 
   # Live state (works even when the game replaces Input.update, as older
@@ -484,23 +493,24 @@ if Yami::Wide.on?
   class Viewport
     alias_method :yami_vp_init, :initialize
     def initialize(*a)
-      Yami.run_once
+      Yami.run_once unless Yami.once_pending.zero?
+      # Normalise Viewport.new(rect) here. Never re-dispatch to `initialize`:
+      # a game subclass may override it and hand a Rect back to super, which
+      # would recurse forever (stack overflow seen with Pokémon Essentials).
+      if a.size == 1 && a[0].is_a?(Rect)
+        r = a[0]
+        a = [r.x, r.y, r.width, r.height]
+      end
+      return yami_vp_init(*a) unless a.size == 4
       bw, bh = Yami::Wide.base
       rw = Graphics.yami_width
-      if a.size == 4
-        x, y, w, h = a
-        if Yami::Wide.panoramic? && !Yami::Wide.map_ctx?
-          x += Yami::Wide.margin
-        elsif x == 0 && w == bw && h == bh
-          w = rw  # map layers and full-screen effects span the whole display
-        end
-        yami_vp_init(x, y, w, h)
-      elsif a.size == 1 && a[0].is_a?(Rect)
-        r = a[0]
-        initialize(r.x, r.y, r.width, r.height)
-      else
-        yami_vp_init(*a)
+      x, y, w, h = a
+      if Yami::Wide.panoramic? && !Yami::Wide.map_ctx?
+        x += Yami::Wide.margin
+      elsif x == 0 && w == bw && h == bh
+        w = rw # map layers and full-screen effects span the whole display
       end
+      yami_vp_init(x, y, w, h)
     end
   end
 

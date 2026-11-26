@@ -38,6 +38,25 @@ elsif kind == "oldess"
   check "game's own Graphics.width now reports the real width", Graphics.width == 852 && Graphics.height == 480
   check "title viewport spans the full width", vp.rect == [0, 0, 852, 480]
   check "Essentials' own camera left alone", Game_Map.new.scroll_right(1) == :essentials_own && Game_Player.new.center(0, 0) == :essentials_own
+  # Re-entrancy: a one-shot hook whose body creates a viewport, and game code
+  # that creates viewports inside viewport constructors (stack overflow before).
+  calls = 0
+  pending_before = Yami.once_pending
+  Yami.once_when(-> { true }) { calls += 1; Viewport.new(0, 0, 10, 10) }
+  class NestVp < Viewport
+    def initialize(n); super(0, 0, 640, 480); NestVp.new(n - 1) if n > 0; end
+  end
+  ok = begin; NestVp.new(200); true; rescue SystemStackError; false; end
+  check "nested viewport creation doesn't recurse into hooks", ok
+  check "one-shot hook ran exactly once and was removed", calls == 1 && Yami.once_pending == pending_before
+  # Game subclass that hands a Rect to super (old Essentials helpers do this):
+  # the hook must not re-dispatch to the subclass's initialize.
+  class RectVp < Viewport
+    def initialize(*args); args.size == 4 ? super(Rect.new(*args)) : super(*args); end
+  end
+  ok = begin; v = RectVp.new(0, 0, 640, 480); true; rescue SystemStackError; false; end
+  check "Viewport subclass passing a Rect to super doesn't recurse", ok
+  check "...and still gets the widescreen rect", ok && v.rect == [0, 0, 852, 480]
 else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)
