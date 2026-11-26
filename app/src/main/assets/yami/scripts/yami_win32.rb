@@ -52,21 +52,31 @@ module YamiWin32
 
   module_function
 
+  # Live keyboard state: a 512-byte String from the engine (one byte per SDL
+  # scancode). Input.raw_key_states only refreshes inside the engine's own
+  # Input.update, which games that replace Input never call; it is only the
+  # fallback.
   def raw_states
+    live = (Input.yami_live_key_states rescue nil)
+    return live if live.is_a?(String)
     s = (Input.raw_key_states rescue nil)
     s.is_a?(Array) ? s : []
+  end
+
+  def pressed?(states, sc)
+    states.is_a?(String) ? states.getbyte(sc).to_i != 0 : !!states[sc]
   end
 
   def key_down?(vk, states = raw_states)
     vk = vk.to_i & 0xFF
     if (pair = VK_PAIRS[vk])
-      return pair.any? { |sc| states[sc] }
+      return pair.any? { |sc| pressed?(states, sc) }
     end
     if vk == 0x01 || vk == 0x02 || vk == 0x04 # mouse buttons
       return (Input.press?(Input.const_get([nil, :MOUSELEFT, :MOUSERIGHT, nil, :MOUSEMIDDLE][vk])) rescue false)
     end
     sc = VK[vk]
-    sc ? !!states[sc] : false
+    sc ? pressed?(states, sc) : false
   end
 
   # Write bytes into a caller-provided buffer string, in place.

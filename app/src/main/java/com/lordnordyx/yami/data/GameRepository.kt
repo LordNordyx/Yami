@@ -53,6 +53,16 @@ class GameRepository(private val context: Context, private val owner: Boolean = 
             _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v2())
             _games.value = _games.value.map { it.copy(settings = it.settings.v2()) }
         }
+        if (from < 3) {
+            // v3: fill the screen by default (widescreen), and bilinear scaling — the
+            // shader-based filters drew the picture at the wrong size on some GPUs.
+            fun GameSettings.v3() = copy(
+                widescreen = if (widescreen == WidescreenMode.OFF) WidescreenMode.FULL else widescreen,
+                scaling = if (scaling.code >= ScalingFilter.BICUBIC.code) ScalingFilter.BILINEAR else scaling,
+            )
+            _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v3())
+            _games.value = _games.value.map { it.copy(settings = it.settings.v3()) }
+        }
         _settings.value = _settings.value.copy(schema = AppSettings.SCHEMA)
         persist()
     }

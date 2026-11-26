@@ -72,6 +72,7 @@ Input.keys[44] = true   # SDL space (Yami's C button)
 Input.keys[27] = true   # SDL X (Yami's B button)
 Input.keys[82] = true   # SDL up
 Input.keys[225] = true  # SDL left shift (Yami's A button)
+check "device condition: raw_key_states stale (game replaced Input.update)", Input.raw_key_states[44] == false
 check "VK_SPACE ← C button", getstate.(0x20)
 check "VK 'X' ← B button", getstate.(0x58)
 check "VK_UP ← up", getstate.(0x26) && !getstate.(0x28)

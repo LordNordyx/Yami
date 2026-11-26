@@ -22,9 +22,9 @@ enum class AspectPreset(val label: String, val ratio: Float) {
 enum class ScalingFilter(val code: Int, val label: String) {
     NEAREST(0, "Nearest (sharp pixels)"),
     BILINEAR(1, "Bilinear"),
-    BICUBIC(2, "Bicubic"),
-    LANCZOS3(3, "Lanczos3"),
-    XBRZ(4, "xBRZ (pixel-art upscaler)"),
+    BICUBIC(2, "Bicubic (experimental)"),
+    LANCZOS3(3, "Lanczos3 (experimental)"),
+    XBRZ(4, "xBRZ (experimental)"),
 }
 
 @Serializable
@@ -52,10 +52,10 @@ enum class ControllerProfile(val label: String) {
 @Serializable
 data class GameSettings(
     // Display
-    val widescreen: WidescreenMode = WidescreenMode.OFF,
+    val widescreen: WidescreenMode = WidescreenMode.FULL,
     val aspect: AspectPreset = AspectPreset.DEVICE,
     val fit: ScreenFit = ScreenFit.FIT,
-    val scaling: ScalingFilter = ScalingFilter.BICUBIC,
+    val scaling: ScalingFilter = ScalingFilter.BILINEAR,
     val xbrzFactor: Int = 2,
     val bicubicSharpness: Int = 100,
     val shader: String = "none",
@@ -146,7 +146,7 @@ data class AppSettings(
     val optimizeOnImport: Boolean = true,
     val haptics: Boolean = true,
 ) {
-    companion object { const val SCHEMA = 2 }
+    companion object { const val SCHEMA = 3 }
 }
 
 @Serializable enum class LibraryView { COVERS, GRID, LIST }

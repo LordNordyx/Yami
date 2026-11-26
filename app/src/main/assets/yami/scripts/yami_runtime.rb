@@ -79,16 +79,29 @@ module Yami
 
   def tick
     @tick_hooks.each { |h| h.call rescue log("tick hook: #{$!}") }
-    unless @once_hooks.empty?
-      @once_hooks.reject! do |cond, b|
-        next false unless (cond.call rescue false)
-        begin; b.call; rescue StandardError => e; log("once hook: #{e.class}: #{e.message}"); end
-        true
-      end
-    end
+    run_once
   end
 
+  # Runs pending one-shot hooks whose condition now holds. Called every frame,
+  # and from object creation (games build their title screen before the first
+  # Graphics.update).
+  def run_once
+    return if @once_hooks.empty? || @running_once
+    @running_once = true
+    @once_hooks.reject! do |cond, b|
+      next false unless (cond.call rescue false)
+      begin; b.call; rescue StandardError => e; log("once hook: #{e.class}: #{e.message}"); end
+      true
+    end
+  ensure
+    @running_once = false
+  end
+
+  # Live state (works even when the game replaces Input.update, as older
+  # Essentials does); falls back to raw_key_states.
   def key_down?(scancode)
+    live = (Input.yami_live_key_states rescue nil)
+    return live.getbyte(scancode).to_i != 0 if live.is_a?(String)
     states = Input.raw_key_states
     states && states[scancode] ? true : false
   rescue StandardError
@@ -452,6 +465,7 @@ if Yami::Wide.on?
   class << Graphics
     alias_method :yami_resize_screen, :resize_screen
     alias_method :yami_width, :width
+    alias_method :yami_height, :height
     def resize_screen(w, h)
       Yami::Wide.base = [w, h]
       yami_resize_screen(*Yami::Wide.target(w, h))
@@ -470,6 +484,7 @@ if Yami::Wide.on?
   class Viewport
     alias_method :yami_vp_init, :initialize
     def initialize(*a)
+      Yami.run_once
       bw, bh = Yami::Wide.base
       rw = Graphics.yami_width
       if a.size == 4
@@ -519,7 +534,25 @@ if Yami::Wide.on?
     rw = Graphics.yami_width
     rh = Graphics.height
     essentials = defined?(Settings) && Settings.const_defined?(:SCREEN_WIDTH)
+    # Older Essentials has its own camera code: never apply the stock RMXP patches to it.
+    essentials_old = !essentials && %i[DEFAULTSCREENWIDTH PBSpecies PokeBattle_Pokemon PokemonSystem]
+                                      .any? { |c| Object.const_defined?(c) }
     silence = ->(&blk) { v = $VERBOSE; $VERBOSE = nil; blk.call; $VERBOSE = v }
+
+    # Older Essentials (v15-v18): screen size lives in top-level constants, and
+    # its Sprite_Resizer may redefine Graphics.width/height in Ruby.
+    if !Yami::Wide.panoramic?
+      if Object.const_defined?(:DEFAULTSCREENWIDTH)
+        silence.call { Object.send(:remove_const, :DEFAULTSCREENWIDTH); Object.const_set(:DEFAULTSCREENWIDTH, rw) }
+      end
+      %i[width height].each do |m|
+        loc = (Graphics.method(m).source_location rescue nil)
+        next unless loc && !loc[0].to_s.include?("yami_")
+        native = m == :width ? :yami_width : :yami_height
+        Graphics.define_singleton_method(m) { send(native) }
+        Yami.log("widescreen: game redefined Graphics.#{m}; reporting the real #{m}")
+      end
+    end
 
     if essentials
       if !Yami::Wide.panoramic?
@@ -532,6 +565,8 @@ if Yami::Wide.on?
           Game_Player.const_set(:SCREEN_CENTER_X, ((rw / 2) - (Game_Map::TILE_WIDTH / 2)) * xs)
         end
       end
+    elsif essentials_old
+      # Its camera reads Graphics.width (now the real width) — nothing to patch.
     else
       # Stock RMXP camera assumes a 20x15 tile screen.
       if Game_Player.const_defined?(:CENTER_X)

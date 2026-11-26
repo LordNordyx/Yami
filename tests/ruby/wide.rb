@@ -23,6 +23,21 @@ if kind == "xp"
   check "center clamps to map edge", $game_map.display_x == 100 * 128 - 852 * 4
   v = Viewport.new(0, 0, 640, 480)
   check "stock 640x480 map viewport spans full width", v.rect == [0, 0, 852, 480]
+elsif kind == "oldess"
+  # Older Essentials (v15-v18): constants + its own Graphics.width, own camera.
+  DEFAULTSCREENWIDTH = 640
+  DEFAULTSCREENHEIGHT = 480
+  module PBSpecies; end
+  module Graphics; @@w = DEFAULTSCREENWIDTH; def self.width; @@w; end; def self.height; DEFAULTSCREENHEIGHT; end; end
+  class Game_Map; def scroll_right(d); :essentials_own; end; end
+  class Game_Player; def center(x, y); :essentials_own; end; end
+  # Title screen is built before the first Graphics.update:
+  vp = Viewport.new(0, 0, 640, 480)
+  check "native screen widened to 852x480", Graphics.yami_width == 852 && Graphics.yami_height == 480
+  check "DEFAULTSCREENWIDTH updated before the title is built", DEFAULTSCREENWIDTH == 852
+  check "game's own Graphics.width now reports the real width", Graphics.width == 852 && Graphics.height == 480
+  check "title viewport spans the full width", vp.rect == [0, 0, 852, 480]
+  check "Essentials' own camera left alone", Game_Map.new.scroll_right(1) == :essentials_own && Game_Player.new.center(0, 0) == :essentials_own
 else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)

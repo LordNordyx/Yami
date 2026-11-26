@@ -43,8 +43,16 @@ module Graphics
   self.frame_rate = 40
 end
 module Input
+  # Like the engine: raw_key_states is a snapshot refreshed only by the native
+  # Input.update; yami_live_key_states is the live event-thread state.
   @keys = Array.new(512, false)
-  class << self; attr_reader :keys; def raw_key_states; @keys.dup; end; end
+  @snapshot = Array.new(512, false)
+  class << self
+    attr_reader :keys
+    def update; @snapshot = @keys.dup; end
+    def raw_key_states; @snapshot.dup; end
+    def yami_live_key_states; @keys.map { |k| k ? 1 : 0 }.pack("C*"); end
+  end
 end
 module Audio; end
 def load_data(p, raw = false); d = File.binread(p); raw ? d : Marshal.load(d); end

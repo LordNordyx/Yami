@@ -51,6 +51,33 @@ index b6344f9..fe5f62e 100644
              if (state)
                  break;
          }
+diff --git a/binding/input-binding.cpp b/binding/input-binding.cpp
+index 3e20428..43676b7 100644
+--- a/binding/input-binding.cpp
++++ b/binding/input-binding.cpp
+@@ -300,6 +300,14 @@ RB_METHOD(inputMouseInWindow) {
+     return rb_bool_new(shState->input().mouseInWindow());
+ }
+ 
++/* [yami] Live keyboard state straight from the event thread, as a 512-byte
++ * string. raw_key_states only refreshes inside the native Input.update, which
++ * games that replace Input (older Pokemon Essentials) never call. */
++RB_METHOD(inputYamiLiveKeyStates) {
++    RB_UNUSED_PARAM;
++    return rb_str_new((const char*)EventThread::keyStates, SDL_NUM_SCANCODES);
++}
++
+ RB_METHOD(inputRawKeyStates) {
+     RB_UNUSED_PARAM;
+     
+@@ -597,6 +605,7 @@ void inputBindingInit() {
+     _rb_define_module_function(module, "mouse_in_window?", inputMouseInWindow);
+     
+     _rb_define_module_function(module, "raw_key_states", inputRawKeyStates);
++    _rb_define_module_function(module, "yami_live_key_states", inputYamiLiveKeyStates);
+     
+     VALUE submod = rb_define_module_under(module, "Controller");
+     _rb_define_module_function(submod, "connected?", inputControllerConnected);
 diff --git a/meson.build b/meson.build
 index 2b3dc51..c36a03d 100644
 --- a/meson.build
