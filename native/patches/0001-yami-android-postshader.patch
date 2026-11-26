@@ -290,6 +290,28 @@ index 4057c6b..c0d7afe 100755
      meson.override_dependency('SDL2_image', sdl2_image, static: true)
  endif
  global_dependencies += sdl2_image
+diff --git a/src/system/systemImpl.cpp b/src/system/systemImpl.cpp
+index 090ab5b..7b76cf8 100644
+--- a/src/system/systemImpl.cpp
++++ b/src/system/systemImpl.cpp
+@@ -26,7 +26,16 @@ std::string systemImpl::getSystemLanguage() {
+     LCIDToLocaleName(lid, wbuf, sizeof(wbuf), 0);
+     wcstombs(buf, wbuf, sizeof(buf));
+ #else
+-    strncpy(buf, std::locale("").name().c_str(), sizeof(buf));
++    /* [yami] std::locale("") throws on Android's libc++; fall back to LANG / en_US */
++    try {
++        strncpy(buf, std::locale("").name().c_str(), sizeof(buf) - 1);
++    } catch (...) {
++        buf[0] = 0;
++    }
++    if (!buf[0] || !strcmp(buf, "C") || !strcmp(buf, "POSIX")) {
++        const char *lang = getenv("LANG");
++        strncpy(buf, (lang && *lang) ? lang : "en_US", sizeof(buf) - 1);
++    }
+ #endif
+     
+     for (int i = 0; (size_t)i < strlen(buf); i++) {
 diff --git a/subprojects/common/sonametool.py b/subprojects/common/sonametool.py
 index 971cda7..53cc633 100644
 --- a/subprojects/common/sonametool.py

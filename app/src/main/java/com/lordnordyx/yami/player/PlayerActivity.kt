@@ -99,6 +99,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         Os.setenv("YAMI_CFG", prepared.cfgFile.absolutePath, true)
         Os.setenv("YAMI_DATA_DIR", prepared.dataDir.absolutePath, true)
         Os.setenv("SDL_ANDROID_TRAP_BACK_BUTTON", "1", true)
+        // System.user_language in the engine (Essentials reads it for its language setting)
+        Os.setenv("LANG", java.util.Locale.getDefault().toString().ifBlank { "en_US" } + ".UTF-8", true)
 
         super.onCreate(savedInstanceState)
         if (SDLActivity.mBrokenLibraries) return
