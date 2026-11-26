@@ -259,6 +259,19 @@ index 3345468..37fdb8f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
+diff --git a/subprojects/common/sonametool.py b/subprojects/common/sonametool.py
+index 971cda7..53cc633 100644
+--- a/subprojects/common/sonametool.py
++++ b/subprojects/common/sonametool.py
+@@ -5,7 +5,7 @@ library = sys.argv[2]
+ 
+ host_machine_is_bsd = host_machine_system in ('dragonfly', 'freebsd', 'netbsd', 'openbsd')
+ host_machine_is_darwin = host_machine_system == 'darwin'
+-host_machine_is_linux = host_machine_system == 'linux'
++host_machine_is_linux = host_machine_system in ('linux', 'android')  # [yami]
+ host_machine_is_unix = host_machine_is_bsd or host_machine_is_linux
+ host_machine_is_windows = host_machine_system in ('cygwin', 'windows')
+ 
 diff --git a/subprojects/packagefiles/sdl2_ttf-android-static.patch b/subprojects/packagefiles/sdl2_ttf-android-static.patch
 new file mode 100644
 index 0000000..c52d244
