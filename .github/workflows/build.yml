@@ -83,6 +83,8 @@ jobs:
     name: Android APK
     needs: [engine, logic-tests]
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -102,3 +104,16 @@ jobs:
         with:
           name: yami-apk
           path: app/build/outputs/apk/**/*.apk
+
+      - name: Publish "latest" release
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk Yami.apk
+          cp app/build/outputs/apk/debug/app-debug.apk Yami-debug.apk
+          gh release delete latest -y --cleanup-tag || true
+          gh release create latest Yami.apk Yami-debug.apk \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Yami (latest build)" \
+            --notes "Automatic build of ${GITHUB_SHA::7}. Install **Yami.apk** (arm64). Yami-debug.apk is the same build with debugging enabled."
