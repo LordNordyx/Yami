@@ -33,6 +33,12 @@ echo "== Ruby 1.8 compatibility"
 echo "== Win32API compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/win32.rb" | grep -v '^\[yami' )
 
+echo "== All scripts together (as the engine loads them)"
+R18="$ROOT/app/src/main/assets/yami/scripts/yami_ruby18.rb"
+mkdir -p "$TMP/combo"
+RPG1="$TMP/rpg1.rb" WORK="$TMP/combo" ruby -r "$R18" "$HERE/ruby/test.rb" | grep -v '^\[yami'
+( cd "$TMP" && LC_ALL=C.UTF-8 ruby -r "$R18" "$HERE/ruby/win32.rb" | grep -v '^\[yami' )
+
 echo "== RGSS archives"
 ( cd "$TMP" && python3 "$HERE/archive/mk.py" \
   && javac -d cls "$ROOT/app/src/main/java/com/lordnordyx/yami/optimize/RgssArchive.java" "$HERE/archive/T.java" \

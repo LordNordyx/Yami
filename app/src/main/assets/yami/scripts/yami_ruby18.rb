@@ -102,30 +102,52 @@ module Yami
 end
 
 # ---------------------------------------------------------------------------
-#  Removed-in-1.9+ methods that old RGSS scripts call. Only methods whose
-#  absence can't be relied on by working code (no Object#id/#type,
-#  String#each/#to_a: those would change respond_to? and Kernel#Array).
+#  Ruby 1.8 core methods that 1.9+ removed. RPG Maker XP and VX ran Ruby 1.8,
+#  so every script in those games was written expecting them; restoring them
+#  matches what the code was tested against. VX Ace (Ruby 1.9) is left alone.
+#  Each is defined only if missing.
 # ---------------------------------------------------------------------------
-class Hash
-  unless method_defined?(:index)
-    def index(value) # 1.8 Hash#index(value) → key
-      key(value)
+module Yami
+  module Ruby18
+    def self.rgss
+      v = (defined?(Yami) && Yami.respond_to?(:cfg)) ? Yami.cfg("rgss").to_i : 0
+      v = ENV["YAMI_RGSS"].to_i if v == 0
+      v == 0 ? 1 : v
+    end
+
+    def self.define_missing(klass, name, &body)
+      return if klass.method_defined?(name) || klass.private_method_defined?(name)
+      klass.send(:define_method, name, &body)
+    end
+
+    def self.define_missing_singleton(klass, name, &body)
+      return if klass.respond_to?(name, true)
+      klass.define_singleton_method(name, &body)
+    end
+
+    def self.install_core_shims
+      # Thread.critical= was 1.8's "don't switch threads" flag; with the GVL and a
+      # single game thread a no-op is equivalent.
+      define_missing_singleton(Thread, :critical) { @yami_critical || false }
+      define_missing_singleton(Thread, :critical=) { |v| @yami_critical = v ? true : false }
+      define_missing_singleton(Thread, :exclusive) { |&b| b.call }
+
+      define_missing(Hash, :index) { |value| key(value) }
+      define_missing(Hash, :indexes) { |*keys| values_at(*keys) }
+      define_missing(Hash, :indices) { |*keys| values_at(*keys) }
+      define_missing(Array, :nitems) { count { |x| !x.nil? } }
+      define_missing(Array, :choice) { sample }
+      define_missing(Array, :indexes) { |*i| values_at(*i) }
+      define_missing(Array, :indices) { |*i| values_at(*i) }
+      define_missing(String, :each) { |*a, &b| each_line(*a, &b) }
+      define_missing(Object, :id) { object_id }
+      define_missing(Object, :type) { self.class }
+      define_missing(Object, :to_a) { [self] }
     end
   end
 end
 
-class Array
-  unless method_defined?(:nitems)
-    def nitems
-      count { |x| !x.nil? }
-    end
-  end
-  unless method_defined?(:choice)
-    def choice
-      sample
-    end
-  end
-end
+Yami::Ruby18.install_core_shims if Yami::Ruby18.rgss <= 2
 
 unless defined?(Fixnum)
   Fixnum = Integer

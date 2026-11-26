@@ -80,6 +80,23 @@ check "unfixable script → nil (original error shown)", Yami.fix_script(broken,
 check "Hash#index (1.8)", ({ a: 1, b: 2 }.index(2) == :b)
 check "Array#nitems", [1, nil, 2].nitems == 2
 check "Fixnum constant", 5.is_a?(Fixnum)
+# BitmapCache in Pokémon Essentials:  Thread.critical = true ... Thread.critical = false
+Thread.critical = true
+check "Thread.critical= / Thread.critical (1.8)", Thread.critical == true
+Thread.critical = false
+check "Thread.critical resets", Thread.critical == false
+check "Thread.exclusive runs the block", Thread.exclusive { 7 } == 7
+check "Hash#indexes", ({ a: 1, b: 2 }.indexes(:b, :a) == [2, 1])
+check "Array#indexes", [10, 20, 30].indexes(2, 0) == [30, 10]
+lines = []; "a\nb\n".each { |l| lines << l }
+check "String#each iterates lines", lines == ["a\n", "b\n"]
+o = Object.new
+check "Object#id → object_id", o.id == o.object_id
+check "Object#type → class", o.type == Object
+check "Object#to_a → [self]", o.to_a == [o] && Array(o) == [o] && [*o] == [o]
+check "attribute ids win over Object#id", Struct.new(:id).new(5).id == 5
+skipped = `#{RbConfig.ruby} -e 'ENV["YAMI_RGSS"]="3"; def print(*); end; load ARGV[0]; puts Thread.respond_to?(:critical=)' #{SCRIPTS}/yami_ruby18.rb 2>/dev/null`.strip
+check "VX Ace (RGSS3) keeps modern Ruby (no shims)", skipped == "false"
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
 exit($fails.zero? ? 0 : 1)

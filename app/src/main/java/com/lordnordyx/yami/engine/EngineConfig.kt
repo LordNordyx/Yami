@@ -50,6 +50,7 @@ object EngineConfig {
         val cfg = File(runtime.dir, "session-${game.id}.cfg")
         cfg.writeText(buildString {
             appendLine("game_id=${game.id}")
+            appendLine("rgss=${if (s.rgssVersionOverride in 1..3) s.rgssVersionOverride else game.rgssVersion}")
             appendLine("mode=${if (optimizeMode) "optimize" else "play"}")
             appendLine("widescreen=${if (optimizeMode) "off" else s.widescreen.name.lowercase()}")
             appendLine("ratio=$ratio")

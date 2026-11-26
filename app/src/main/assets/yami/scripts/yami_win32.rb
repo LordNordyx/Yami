@@ -139,8 +139,9 @@ module YamiWin32
   end
 
   def save_dir
-    d = (defined?(Yami) && Yami.cfg("save_dir")) || ENV["YAMI_DATA_DIR"] || Dir.pwd
-    d
+    d = (Yami.cfg("save_dir") if defined?(Yami) && Yami.respond_to?(:cfg))
+    d = ENV["YAMI_DATA_DIR"] if d.nil? || d.empty?
+    d.nil? || d.empty? ? Dir.pwd : d
   end
 
   # ------------------------------------------------------------------ calls
