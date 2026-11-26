@@ -51,3 +51,5 @@ else # essentials
 end
 check "runtime never opens message boxes (print/p)", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
+
+exit($fails.zero? ? 0 : 1)

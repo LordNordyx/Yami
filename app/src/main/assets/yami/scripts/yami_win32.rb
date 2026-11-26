@@ -1,0 +1,286 @@
+# =============================================================================
+#  Yami Win32API compatibility layer
+#
+#  RPG Maker XP games (older Pokémon Essentials above all) call Windows DLLs
+#  through Win32API — while their scripts load, and for keyboard input. There
+#  are no Windows DLLs on Android, so this emulates the calls these games
+#  actually make and answers everything else with a harmless 0.
+#
+#  Keyboard state comes from the engine (Input.raw_key_states), so touch,
+#  controller and real keyboards all reach games that poll GetAsyncKeyState.
+#  NOTE: never use print/p for logging here (RGSS shows a message box).
+# =============================================================================
+
+module YamiWin32
+  HWND = 0x5A11 # any non-zero handle; games only pass it back to us
+
+  # Windows virtual-key code → SDL scancode
+  VK = {}
+  ("A".."Z").each_with_index { |c, i| VK[c.ord] = 4 + i }            # SDL_SCANCODE_A = 4
+  (1..9).each { |d| VK[0x30 + d] = 29 + d }                           # 1..9 → 30..38
+  VK[0x30] = 39                                                       # 0
+  (0..11).each { |i| VK[0x70 + i] = 58 + i }                          # F1..F12
+  (1..9).each { |d| VK[0x60 + d] = 88 + d }                           # numpad 1..9
+  VK.merge!(
+    0x60 => 98,  0x6E => 99,  0x6A => 85, 0x6B => 87, 0x6D => 86, 0x6F => 84, # numpad 0 . * + - /
+    0x08 => 42,  0x09 => 43,  0x0D => 40, 0x1B => 41, 0x20 => 44,     # back tab enter esc space
+    0x21 => 75,  0x22 => 78,  0x23 => 77, 0x24 => 74,                 # pgup pgdn end home
+    0x25 => 80,  0x26 => 82,  0x27 => 79, 0x28 => 81,                 # left up right down
+    0x2D => 73,  0x2E => 76,                                          # insert delete
+    0xA0 => 225, 0xA1 => 229, 0xA2 => 224, 0xA3 => 228, 0xA4 => 226, 0xA5 => 230,
+    0xBA => 51,  0xBB => 46,  0xBC => 54, 0xBD => 45, 0xBE => 55, 0xBF => 56, # ; = , - . /
+    0xC0 => 53,  0xDB => 47,  0xDC => 49, 0xDD => 48, 0xDE => 52,     # ` [ \ ] '
+  )
+  # generic modifiers match either side
+  VK_PAIRS = { 0x10 => [225, 229], 0x11 => [224, 228], 0x12 => [226, 230] }.freeze
+
+  KNOWN = %w[
+    clienttoscreen copymemory createdirectory findwindow findwindowex getactivewindow
+    getasynckeystate getclientrect getcomputername getcurrentprocessid getcurrentthreadid getcursorpos
+    getdevicecaps getfileattributes getforegroundwindow getkeyboardlayout getkeyboardstate getkeystate
+    getmodulefilename getprivateprofileint getprivateprofilestring getsystemdefaultlangid getsystemmetrics getsystempowerstatus
+    gettickcount getuserdefaultlangid getuserdefaultuilanguage getusername getwindowlong getwindowlongptr
+    getwindowrect getwindowtext getwindowthreadprocessid keybd_event lstrcpy lstrcpya
+    lstrlen lstrlena mapvirtualkey mapvirtualkeyex messagebox messageboxa
+    messageboxw movewindow multibytetowidechar queryperformancecounter queryperformancefrequency rtlmovememory
+    screentoclient sendinput setforegroundwindow setwindowlong setwindowlongptr setwindowpos
+    shgetfolderpath shgetspecialfolderpath showcursor showwindow timegettime toascii
+    tounicode tounicodeex updatewindow widechartomultibyte writeprivateprofilestring
+    getdesktopwindow getfocus getparent getmodulehandle loadlibrary setwindowtext
+    setcursorpos systemparametersinfo setfocus
+  ].freeze
+
+  module_function
+
+  def raw_states
+    s = (Input.raw_key_states rescue nil)
+    s.is_a?(Array) ? s : []
+  end
+
+  def key_down?(vk, states = raw_states)
+    vk = vk.to_i & 0xFF
+    if (pair = VK_PAIRS[vk])
+      return pair.any? { |sc| states[sc] }
+    end
+    if vk == 0x01 || vk == 0x02 || vk == 0x04 # mouse buttons
+      return (Input.press?(Input.const_get([nil, :MOUSELEFT, :MOUSERIGHT, nil, :MOUSEMIDDLE][vk])) rescue false)
+    end
+    sc = VK[vk]
+    sc ? !!states[sc] : false
+  end
+
+  # Write bytes into a caller-provided buffer string, in place.
+  def fill(buf, bytes)
+    return unless buf.is_a?(String)
+    bytes = bytes.b
+    if buf.bytesize > 0
+      data = bytes.byteslice(0, buf.bytesize)
+      buf.force_encoding(Encoding::BINARY)
+      buf[0, data.bytesize] = data
+    else
+      buf.replace(bytes)
+    end
+  end
+
+  def cstr(s)
+    return "" unless s.is_a?(String)
+    s.b.split("\0", 2).first.to_s
+  end
+
+  def ini_path(file)
+    f = cstr(file).tr("\\", "/").sub(%r{\A\./}, "")
+    f = "Game.ini" if f.empty?
+    return f if File.exist?(f)
+    Dir.glob("*").find { |x| x.downcase == File.basename(f).downcase } || f
+  end
+
+  def ini_read(file, section, key)
+    path = ini_path(file)
+    return nil unless File.exist?(path)
+    cur = nil
+    File.foreach(path, mode: "rb") do |line|
+      line = line.chomp.strip
+      if line =~ /\A\[(.+)\]\z/
+        cur = $1
+      elsif cur && cur.casecmp?(cstr(section)) && line.include?("=")
+        k, v = line.split("=", 2)
+        return v.strip if k.strip.casecmp?(cstr(key))
+      end
+    end
+    nil
+  rescue StandardError
+    nil
+  end
+
+  def ini_write(file, section, key, value)
+    path = ini_path(file)
+    lines = File.exist?(path) ? File.read(path, mode: "rb").split(/\r?\n/) : []
+    sec = cstr(section); k = cstr(key)
+    idx = lines.index { |l| l.strip =~ /\A\[(.+)\]\z/ && $1.casecmp?(sec) }
+    if idx.nil?
+      lines << "[#{sec}]" << "#{k}=#{cstr(value)}"
+    else
+      j = idx + 1
+      j += 1 while j < lines.size && lines[j] !~ /\A\s*\[/ && !(lines[j].include?("=") && lines[j].split("=", 2)[0].strip.casecmp?(k))
+      if j < lines.size && lines[j].include?("=") && lines[j] !~ /\A\s*\[/
+        lines[j] = "#{k}=#{cstr(value)}"
+      else
+        lines.insert(j, "#{k}=#{cstr(value)}")
+      end
+    end
+    File.write(path, lines.join("\r\n") + "\r\n", mode: "wb")
+    1
+  rescue StandardError
+    0
+  end
+
+  def screen_size
+    [(Graphics.width rescue 640), (Graphics.height rescue 480)]
+  end
+
+  def save_dir
+    d = (defined?(Yami) && Yami.cfg("save_dir")) || ENV["YAMI_DATA_DIR"] || Dir.pwd
+    d
+  end
+
+  # ------------------------------------------------------------------ calls
+  def call(name, args)
+    case name
+    # --- keyboard -------------------------------------------------------
+    when "getasynckeystate", "getkeystate"
+      key_down?(args[0]) ? 0x8000 : 0
+    when "getkeyboardstate"
+      st = raw_states
+      fill(args[0], (0...256).map { |vk| key_down?(vk, st) ? 0x80 : 0 }.pack("C*"))
+      1
+    when "mapvirtualkey", "mapvirtualkeyex" then 0
+    when "getkeyboardlayout" then 0x04090409
+    when "keybd_event", "sendinput" then 0
+    when "toascii", "tounicode", "tounicodeex" then 0
+
+    # --- ini files ------------------------------------------------------
+    when "getprivateprofilestring"
+      # (section, key, default, buffer, size, file)
+      v = ini_read(args[5], args[0], args[1]) || cstr(args[2])
+      size = args[4].to_i
+      out = v.b.byteslice(0, [size - 1, 0].max).to_s
+      fill(args[3], out + "\0")
+      out.bytesize
+    when "getprivateprofileint"
+      (ini_read(args[3], args[0], args[1]) || args[2]).to_i
+    when "writeprivateprofilestring"
+      ini_write(args[3], args[0], args[1], args[2])
+
+    # --- strings --------------------------------------------------------
+    when "multibytetowidechar"
+      # (codepage, flags, str, len, wbuf, wlen)
+      src = args[2].is_a?(String) ? args[2].b : ""
+      len = args[3].to_i
+      src = len < 0 ? src.split("\0", 2).first.to_s + "\0" : src.byteslice(0, len).to_s
+      w = src.force_encoding(Encoding::UTF_8).scrub("?").encode(Encoding::UTF_16LE).b
+      chars = w.bytesize / 2
+      return chars if args[5].to_i == 0
+      fill(args[4], w)
+      [chars, args[5].to_i].min
+    when "widechartomultibyte"
+      # (codepage, flags, wstr, wlen, buf, len, default, used)
+      src = args[2].is_a?(String) ? args[2].b : ""
+      wlen = args[3].to_i
+      if wlen < 0
+        i = 0
+        i += 2 while i + 1 < src.bytesize && src.getbyte(i) | src.getbyte(i + 1) != 0
+        src = src.byteslice(0, i).to_s + "\0\0"
+      else
+        src = src.byteslice(0, wlen * 2).to_s
+      end
+      u = src.force_encoding(Encoding::UTF_16LE).scrub.encode(Encoding::UTF_8).b
+      return u.bytesize if args[5].to_i == 0
+      fill(args[4], u)
+      [u.bytesize, args[5].to_i].min
+    when "rtlmovememory", "copymemory"
+      dst, src, n = args
+      fill(dst, src.b.byteslice(0, n.to_i).to_s) if dst.is_a?(String) && src.is_a?(String)
+      0
+    when "lstrlen", "lstrlena" then cstr(args[0]).bytesize
+    when "lstrcpy", "lstrcpya"
+      fill(args[0], cstr(args[1]) + "\0"); 1
+
+    # --- window ---------------------------------------------------------
+    when "findwindow", "findwindowex", "getactivewindow", "getforegroundwindow",
+         "getdesktopwindow", "getfocus", "getparent", "getmodulehandle", "loadlibrary"
+      HWND
+    when "getwindowthreadprocessid", "getcurrentthreadid", "getcurrentprocessid" then 1
+    when "getwindowrect", "getclientrect"
+      w, h = screen_size
+      fill(args[1], [0, 0, w, h].pack("l4")); 1
+    when "clienttoscreen", "screentoclient" then 1
+    when "getcursorpos"
+      x = (Input.mouse_x rescue 0); y = (Input.mouse_y rescue 0)
+      fill(args[0], [x, y].pack("l2")); 1
+    when "getsystemmetrics"
+      w, h = screen_size
+      { 0 => w, 1 => h, 4 => 0, 5 => 1, 6 => 1, 7 => 0, 8 => 0, 32 => 0, 33 => 0 }.fetch(args[0].to_i, 0)
+    when "getdevicecaps" then 96
+    when "getwindowlong", "getwindowlongptr", "setwindowlong", "setwindowlongptr" then 0
+    when "setwindowpos", "movewindow", "showwindow", "updatewindow", "setforegroundwindow",
+         "setwindowtext", "setcursorpos", "systemparametersinfo", "setfocus" then 1
+    when "getwindowtext"
+      t = ($yami_window_title ||= (ini_read("Game.ini", "Game", "Title") || "Game"))
+      fill(args[1], t.b.byteslice(0, [args[2].to_i - 1, 0].max).to_s + "\0"); t.bytesize
+    when "showcursor" then 0
+    when "messagebox", "messageboxa", "messageboxw"
+      text = cstr(args[1])
+      (Kernel.send(:print, text) rescue nil) unless text.empty? # RGSS print = message box, intended here
+      1
+
+    # --- system ---------------------------------------------------------
+    when "gettickcount", "timegettime"
+      (Process.clock_gettime(Process::CLOCK_MONOTONIC) * 1000).to_i & 0x7FFFFFFF
+    when "queryperformancecounter"
+      fill(args[0], [(Process.clock_gettime(Process::CLOCK_MONOTONIC) * 1_000_000).to_i].pack("q")); 1
+    when "queryperformancefrequency"
+      fill(args[0], [1_000_000].pack("q")); 1
+    when "getuserdefaultlangid", "getsystemdefaultlangid", "getuserdefaultuilanguage" then 0x0409
+    when "getusername", "getcomputername"
+      fill(args[0], "Player\0"); 1
+    when "getmodulefilename"
+      fill(args[1], "Game.exe\0"); 8
+    when "shgetfolderpath", "shgetspecialfolderpath"
+      # (hwnd, csidl, token, flags, path) / (hwnd, path, csidl, create)
+      buf = name == "shgetfolderpath" ? args[4] : args[1]
+      fill(buf, save_dir.b + "\0")
+      name == "shgetfolderpath" ? 0 : 1
+    when "createdirectory" then (Dir.mkdir(cstr(args[0])) rescue nil; 1)
+    when "getfileattributes" then File.exist?(cstr(args[0])) ? (File.directory?(cstr(args[0])) ? 0x10 : 0x80) : -1
+    when "getsystempowerstatus"
+      fill(args[0], [1, 0, 100, 0, -1, -1].pack("CCCCll")); 1
+    else
+      0
+    end
+  rescue StandardError => e
+    (STDERR.write("[yami-win32] #{name}: #{e.class}: #{e.message}\n") rescue nil)
+    0
+  end
+end
+
+# The class games instantiate (and often reopen to add helpers).
+class Win32API
+  attr_reader :dll, :func
+
+  def initialize(dll = "", func = "", imports = nil, export = nil, *_rest)
+    @dll = dll.to_s
+    @func = func.to_s
+    # GetPrivateProfileStringA / ...W → getprivateprofilestring
+    n = @func.downcase
+    n = n[0..-2] if !YamiWin32::KNOWN.include?(n) && n =~ /[aw]\z/ && YamiWin32::KNOWN.include?(n[0..-2])
+    @name = n
+  end
+
+  def call(*args)
+    YamiWin32.call(@name, args)
+  end
+  alias Call call
+end
+
+MiniFFI = Win32API unless defined?(MiniFFI)
+(STDERR.write("[yami] Win32API compatibility layer active\n") rescue nil)

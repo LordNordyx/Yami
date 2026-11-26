@@ -102,3 +102,5 @@ check "legacy save in game folder still loads", File.open("Save2.rxdata", "rb") 
 check "non-save files untouched", File.exist?("Data/Map001.rxdata")
 check "runtime never opens message boxes (print/p)", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
+
+exit($fails.zero? ? 0 : 1)

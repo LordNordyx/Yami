@@ -27,6 +27,9 @@ for args in "full xp" "full ess" "panoramic ess"; do
   mkdir -p "$TMP/w"; WORK="$TMP/w" ruby "$HERE/ruby/wide.rb" $args | grep -v '^\[yami\]'
 done
 
+echo "== Win32API compatibility"
+( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/win32.rb" | grep -v '^\[yami' )
+
 echo "== RGSS archives"
 ( cd "$TMP" && python3 "$HERE/archive/mk.py" \
   && javac -d cls "$ROOT/app/src/main/java/com/lordnordyx/yami/optimize/RgssArchive.java" "$HERE/archive/T.java" \
