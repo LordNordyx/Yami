@@ -351,6 +351,42 @@ index 971cda7..53cc633 100644
  host_machine_is_unix = host_machine_is_bsd or host_machine_is_linux
  host_machine_is_windows = host_machine_system in ('cygwin', 'windows')
  
+diff --git a/subprojects/openal-soft.wrap b/subprojects/openal-soft.wrap
+index 2fbafef..c24484a 100644
+--- a/subprojects/openal-soft.wrap
++++ b/subprojects/openal-soft.wrap
+@@ -14,6 +14,7 @@ diff_files =
+     openal-soft-info.patch,
+     openal-soft-partial-dependency.patch,
+     openal-soft-simd.patch,
++    openal-soft-android-opensl.patch,
+     end-of-diff-files.patch
+ 
+ [provide]
+diff --git a/subprojects/packagefiles/openal-soft-android-opensl.patch b/subprojects/packagefiles/openal-soft-android-opensl.patch
+new file mode 100644
+index 0000000..0461373
+--- /dev/null
++++ b/subprojects/packagefiles/openal-soft-android-opensl.patch
+@@ -0,0 +1,18 @@
++--- a/meson.build
+++++ b/meson.build
++@@ -61,8 +61,13 @@ oboe_dep = dependency(
++ )
++ opensl_dep = dependency(
++   'opensl',
++-  required: get_option('opensl'),
++-).partial_dependency(compile_args: true, includes: true, link_args: host_machine.system() not in ['windows', 'cygwin'] and not dl_dep.found(), links: host_machine.system() not in ['windows', 'cygwin'] and not dl_dep.found(), sources: true)
+++  required: host_machine.system() == 'android' ? false : get_option('opensl'),
+++)
+++if not opensl_dep.found() and host_machine.system() == 'android' and not get_option('opensl').disabled()
+++  # [yami] the NDK ships OpenSL ES as a plain system library, without pkg-config/CMake files
+++  opensl_dep = cpp.find_library('OpenSLES', has_headers: ['SLES/OpenSLES_Android.h'], required: get_option('opensl'))
+++endif
+++opensl_dep = opensl_dep.partial_dependency(compile_args: true, includes: true, link_args: host_machine.system() not in ['windows', 'cygwin'] and not dl_dep.found(), links: host_machine.system() not in ['windows', 'cygwin'] and not dl_dep.found(), sources: true)
++ oss_dep = dependency(
++   'oss',
++   required: get_option('oss'),
 diff --git a/subprojects/packagefiles/ruby-3.1/meson.build b/subprojects/packagefiles/ruby-3.1/meson.build
 index 05979e8..c55afbe 100644
 --- a/subprojects/packagefiles/ruby-3.1/meson.build

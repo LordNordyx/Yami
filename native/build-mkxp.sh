@@ -74,5 +74,12 @@ for sym in Java_org_libsdl_app_SDLActivity_nativeSetupJNI Java_org_libsdl_app_SD
     fail=1
   fi
 done
+# Audio: OpenAL must have its OpenSL ES backend, otherwise games stop at
+# "Could not detect an available audio device".
+IMPORTS="$("$NM" -D --undefined-only "$OUT/libmain.so")"
+if ! grep -q "slCreateEngine" <<<"$IMPORTS"; then
+  echo "OpenAL was built without the OpenSL ES backend (no slCreateEngine import)"
+  fail=1
+fi
 [ "$fail" = 0 ] || exit 1
 echo ">> $OUT/libmain.so ($(du -h "$OUT/libmain.so" | cut -f1))"
