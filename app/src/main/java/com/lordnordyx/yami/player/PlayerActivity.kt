@@ -200,10 +200,12 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
             layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
-        hideSystemBars()
+        // Bars are hidden in hideSystemBars() once SDL has installed the decor view;
+        // touching the insets controller before that throws on Android 13.
     }
 
     private fun hideSystemBars() {
+        if (window.peekDecorView() == null) return
         if (Build.VERSION.SDK_INT >= 30) {
             window.insetsController?.let {
                 it.hide(WindowInsets.Type.systemBars())
