@@ -1,0 +1,81 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  logic-tests:
+    name: Runtime & optimizer tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.1"
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - run: bash tests/run.sh
+
+  engine:
+    name: mkxp-z engine (arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build cmake bison autoconf automake libtool pkg-config gperf ruby python3-pip xxd
+          pip3 install --break-system-packages "meson>=1.4"
+
+      - name: Set up NDK
+        id: ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+          add-to-path: false
+
+      - name: Cache meson subprojects
+        uses: actions/cache@v4
+        with:
+          path: native/.work/mkxp-z/subprojects/packagecache
+          key: mkxpz-subprojects-${{ hashFiles('native/build-mkxp.sh') }}
+
+      - name: Build engine
+        env:
+          ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
+        run: bash native/build-mkxp.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libmain-arm64
+          path: app/src/main/jniLibs/arm64-v8a/libmain.so
+
+  apk:
+    name: Android APK
+    needs: [engine, logic-tests]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: libmain-arm64
+          path: app/src/main/jniLibs/arm64-v8a
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14.3
+      - name: Assemble
+        run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yami-apk
+          path: app/build/outputs/apk/**/*.apk

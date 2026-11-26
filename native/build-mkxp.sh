@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Builds the mkxp-z RGSS engine for Android (arm64-v8a) and drops libmain.so
+# into app/src/main/jniLibs. Requires: Android NDK (r26+), meson, ninja,
+# cmake, python3, a host Ruby (for cross-compiling MRI), bison, autoconf.
+#
+#   ANDROID_NDK_HOME=/path/to/ndk ./native/build-mkxp.sh
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(dirname "$HERE")"
+API="${ANDROID_API:-26}"
+NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
+MKXPZ_REPO="${MKXPZ_REPO:-https://github.com/mkxp-z/mkxp-z.git}"
+# Pinned commit the patches were written against.
+MKXPZ_REF="${MKXPZ_REF:-a8f9d9ee331034b7778d0f6c3a5603de8b87388f}"
+WORK="${WORK:-$ROOT/native/.work}"
+OUT="$ROOT/app/src/main/jniLibs/arm64-v8a"
+
+[ -n "$NDK" ] && [ -d "$NDK" ] || { echo "Set ANDROID_NDK_HOME"; exit 1; }
+mkdir -p "$WORK" "$OUT"
+
+if [ ! -d "$WORK/mkxp-z/.git" ]; then
+  git clone "$MKXPZ_REPO" "$WORK/mkxp-z"
+fi
+cd "$WORK/mkxp-z"
+git fetch --depth 1 origin "$MKXPZ_REF" 2>/dev/null || true
+git checkout -f "$MKXPZ_REF"
+git clean -fdq -e subprojects/packagecache
+for p in "$HERE"/patches/*.patch; do
+  echo ">> applying $(basename "$p")"
+  git apply --whitespace=nowarn "$p"
+done
+
+sed -e "s|@NDK@|$NDK|g" -e "s|@API@|$API|g" \
+  "$HERE/android-arm64.cross.in" > "$WORK/android-arm64.cross"
+
+BUILD="$WORK/build-arm64"
+if [ ! -f "$BUILD/build.ninja" ]; then
+  meson setup "$BUILD" \
+    --cross-file "$WORK/android-arm64.cross" \
+    --buildtype release \
+    -Dstrip=true \
+    -Dgfx_backend=gles \
+    -Dextra_shaders=enabled \
+    -Dangle=disabled \
+    -Duse_miniffi=false \
+    -Dsteamworks_path= \
+    -Ddefault_system=disabled \
+    -Dwrap_mode=default
+fi
+ninja -C "$BUILD"
+
+LIB="$(find "$BUILD" -maxdepth 1 -name 'libmain.so' | head -1)"
+[ -f "$LIB" ] || { echo "libmain.so not produced"; exit 1; }
+cp "$LIB" "$OUT/libmain.so"
+"$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip" --strip-unneeded "$OUT/libmain.so"
+
+# Sanity check: the SDL JNI entry points must be exported, otherwise
+# SDLActivity fails with UnsatisfiedLinkError at startup.
+NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
+for sym in Java_org_libsdl_app_SDLActivity_nativeSetupJNI SDL_main; do
+  "$NM" -D --defined-only "$OUT/libmain.so" | grep -q "$sym" \
+    || { echo "missing exported symbol: $sym"; exit 1; }
+done
+echo ">> $OUT/libmain.so ($(du -h "$OUT/libmain.so" | cut -f1))"

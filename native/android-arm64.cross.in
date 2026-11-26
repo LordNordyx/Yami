@@ -1,0 +1,32 @@
+# Meson cross file for Android arm64. @NDK@ and @API@ are substituted by build-mkxp.sh.
+[constants]
+toolchain = '@NDK@/toolchains/llvm/prebuilt/linux-x86_64'
+target = 'aarch64-linux-android@API@'
+
+[binaries]
+c = toolchain / 'bin' / (target + '-clang')
+cpp = toolchain / 'bin' / (target + '-clang++')
+ar = toolchain / 'bin' / 'llvm-ar'
+strip = toolchain / 'bin' / 'llvm-strip'
+ranlib = toolchain / 'bin' / 'llvm-ranlib'
+nm = toolchain / 'bin' / 'llvm-nm'
+objcopy = toolchain / 'bin' / 'llvm-objcopy'
+pkg-config = 'false'
+cmake = 'cmake'
+
+[built-in options]
+c_args = ['-fPIC', '-DANDROID', '-D__ANDROID_API__=@API@']
+cpp_args = ['-fPIC', '-DANDROID', '-D__ANDROID_API__=@API@']
+c_link_args = ['-static-libstdc++']
+cpp_link_args = ['-static-libstdc++']
+default_library = 'static'
+
+[properties]
+needs_exe_wrapper = true
+sys_root = toolchain / 'sysroot'
+
+[host_machine]
+system = 'android'
+cpu_family = 'aarch64'
+cpu = 'armv8-a'
+endian = 'little'

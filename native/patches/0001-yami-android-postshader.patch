@@ -1,0 +1,261 @@
+diff --git a/meson.build b/meson.build
+index 2b3dc51..5b41436 100644
+--- a/meson.build
++++ b/meson.build
+@@ -182,6 +182,21 @@ libmkxp = static_library(
+     override_options: {'c_std': c_std, 'cpp_std': cpp_std},
+ )
+ 
++if host_system == 'android'
++    # [yami] On Android the engine is loaded by SDLActivity as libmain.so
++    shared_library(
++        'main',
++        sources: [git_hash_file],
++        link_whole: libmkxp,
++        dependencies: global_dependencies,
++        include_directories: global_include_dirs,
++        link_args: global_link_args + ['-Wl,-soname,libmain.so', '-llog', '-landroid', '-lGLESv2', '-lEGL', '-lOpenSLES'],
++        override_options: {'c_std': c_std, 'cpp_std': cpp_std},
++        install: true,
++        install_dir: '.',
++        install_tag: meson.project_name(),
++    )
++else
+ executable(
+     exe_name,
+     sources: [
+@@ -198,6 +213,7 @@ executable(
+     install_dir: '.',
+     install_tag: meson.project_name(),
+ )
++endif
+ 
+ global_install_tags = [meson.project_name()]
+ if host_system == 'darwin'
+diff --git a/src/config.cpp b/src/config.cpp
+index c9aae20..417da04 100644
+--- a/src/config.cpp
++++ b/src/config.cpp
+@@ -26,9 +26,21 @@
+ #include "system/system.h"
+ 
+ 
++#include <cstdlib>
++
+ namespace json = json5pp;
+ 
+ std::string prefPath(const char *org, const char *app) {
++    /* [yami] SDL_GetPrefPath ignores org/app on Android, which would make
++     * every game share one save directory. The frontend passes a per-game
++     * directory through the environment instead. */
++    const char *override = getenv("YAMI_DATA_DIR");
++    if (override && *override) {
++        std::string ret(override);
++        if (ret.back() != '/')
++            ret += '/';
++        return ret;
++    }
+     char *path = SDL_GetPrefPath(org, app);
+     if (!path)
+         return std::string("");
+@@ -144,6 +156,8 @@ void Config::read(int argc, char *argv[]) {
+         {"xbrzScalingFactor", 1.},
+ #endif
+         {"enableHires", false},
++        {"postShader", ""},
++        {"postShaderIntensity", 1.},
+         {"textureScalingFactor", 1.},
+         {"framebufferScalingFactor", 1.},
+         {"atlasScalingFactor", 1.},
+@@ -284,6 +298,8 @@ try { exp } catch (...) {}
+     SET_OPT(xbrzScalingFactor, integer);
+ #endif
+     SET_OPT(enableHires, boolean);
++    SET_STRINGOPT(postShader, postShader);
++    SET_OPT(postShaderIntensity, number);
+     SET_OPT(textureScalingFactor, number);
+     SET_OPT(framebufferScalingFactor, number);
+     SET_OPT(atlasScalingFactor, number);
+diff --git a/src/config.h b/src/config.h
+index ae7c535..cd6640e 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -53,6 +53,9 @@ struct Config {
+     double xbrzScalingFactor;
+ #endif
+     bool enableHires;
++    /* [yami] post-processing shader */
++    std::string postShader;
++    double postShaderIntensity;
+     double textureScalingFactor;
+     double framebufferScalingFactor;
+     double atlasScalingFactor;
+diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
+index 2412682..d38dd17 100644
+--- a/src/display/gl/shader.cpp
++++ b/src/display/gl/shader.cpp
+@@ -972,3 +972,35 @@ void XbrzShader::setTargetScale(const Vec2 &value)
+ 	gl.Uniform2f(u_targetScale, value.x, value.y);
+ }
+ #endif
++
++
++/* [yami] ---------------------------------------------------------- */
++PostShader::PostShader(const std::string &fragPath)
++{
++	std::string frag;
++	if (!readFile(fragPath.c_str(), frag))
++		throw Exception(Exception::MKXPError,
++		                "Unable to read post shader '%s'", fragPath.c_str());
++
++	Shader::init(mkxp_shader_simple_vert, mkxp_shader_simple_vert_len,
++	             (const unsigned char*) frag.c_str(), (int) frag.size(),
++	             "simple", fragPath.c_str(), "PostShader");
++
++	ShaderBase::init();
++
++	GET_U(outputSize);
++	GET_U(inputSize);
++	GET_U(viewRect);
++	GET_U(frameCount);
++	GET_U(intensity);
++}
++
++void PostShader::setParams(const Vec2 &outputSize, const Vec2 &inputSize,
++                           const Vec4 &viewRect, float frame, float intensity)
++{
++	if (u_outputSize >= 0) gl.Uniform2f(u_outputSize, outputSize.x, outputSize.y);
++	if (u_inputSize >= 0)  gl.Uniform2f(u_inputSize, inputSize.x, inputSize.y);
++	if (u_viewRect >= 0)   gl.Uniform4f(u_viewRect, viewRect.x, viewRect.y, viewRect.z, viewRect.w);
++	if (u_frameCount >= 0) gl.Uniform1f(u_frameCount, frame);
++	if (u_intensity >= 0)  gl.Uniform1f(u_intensity, intensity);
++}
+diff --git a/src/display/gl/shader.h b/src/display/gl/shader.h
+index 1f9c956..05b0b63 100644
+--- a/src/display/gl/shader.h
++++ b/src/display/gl/shader.h
+@@ -410,6 +410,23 @@ protected:
+ };
+ #endif
+ 
++/* [yami] Runtime-loaded post-processing shader applied to the final
++ * upscaled frame. The fragment source is read from disk; the vertex
++ * stage reuses the built-in 'simple' vertex shader. */
++class PostShader : public ShaderBase
++{
++public:
++	PostShader(const std::string &fragPath);
++
++	void setParams(const Vec2 &outputSize, const Vec2 &inputSize,
++	               const Vec4 &viewRect, float frame, float intensity);
++
++	bool ok() const { return initialized; }
++
++protected:
++	GLint u_outputSize, u_inputSize, u_viewRect, u_frameCount, u_intensity;
++};
++
+ class Lanczos3SpriteShader : public SimpleSpriteShader
+ {
+ public:
+diff --git a/src/display/graphics.cpp b/src/display/graphics.cpp
+index 3345468..a245f6d 100644
+--- a/src/display/graphics.cpp
++++ b/src/display/graphics.cpp
+@@ -900,6 +900,9 @@ struct GraphicsPrivate {
+     }
+     
+     ~GraphicsPrivate() {
++        delete postShader;
++        if (postBufferSize.x != 0)
++            TEXFBO::fini(postBuffer);
+         TEXFBO::fini(frozenScene);
+         TEXFBO::fini(integerScaleBuffer);
+         SDL_DestroyMutex(avgFPSLock);
+@@ -1030,9 +1033,86 @@ struct GraphicsPrivate {
+     }
+     
+ private:
++    /* [yami] post-processing state */
++    PostShader *postShader = nullptr;
++    bool postShaderFailed = false;
++    TEXFBO postBuffer;
++    Vec2i postBufferSize = Vec2i(0, 0);
++
++    bool postShaderActive() {
++        const std::string &path = threadData->config.postShader;
++        if (path.empty() || postShaderFailed)
++            return false;
++        if (!postShader) {
++            try {
++                postShader = new PostShader(path);
++            } catch (const Exception &e) {
++                Debug() << "[yami] post shader disabled:" << e.msg;
++                postShaderFailed = true;
++                return false;
++            }
++        }
++        return true;
++    }
++
++    void ensurePostBuffer(const Vec2i &size) {
++        if (postBufferSize.x == size.x && postBufferSize.y == size.y)
++            return;
++        if (postBufferSize.x != 0)
++            TEXFBO::fini(postBuffer);
++        TEXFBO::init(postBuffer);
++        TEXFBO::allocEmpty(postBuffer, size.x, size.y);
++        TEXFBO::linkFBO(postBuffer);
++        postBufferSize = size;
++    }
++
++    void presentPostBuffer(const Vec2i &size) {
++        FBO::bind(FBO::ID(0));
++        glState.viewport.pushSet(IntRect(0, 0, size.x, size.y));
++        FBO::clear();
++
++        PostShader &shader = *postShader;
++        shader.bind();
++        shader.applyViewportProj();
++        shader.setTranslation(Vec2i());
++        shader.setTexSize(size);
++        shader.setParams(Vec2(size.x, size.y), Vec2(scRes.x, scRes.y),
++                         Vec4(scOffset.x, scOffset.y, scSize.x, scSize.y),
++                         (float) frameCount,
++                         (float) threadData->config.postShaderIntensity);
++
++        TEX::bind(postBuffer.tex);
++        TEX::setSmooth(true);
++        glState.blend.pushSet(false);
++        Quad &quad = shState->gpQuad();
++        quad.setTexPosRect(IntRect(0, 0, size.x, size.y), IntRect(0, 0, size.x, size.y));
++        quad.draw();
++        glState.blend.pop();
++        TEX::setSmooth(false);
++        glState.viewport.pop();
++    }
++
+     template <typename... Args> void swapGLBufferImpl(const Vec2i &screenSize, TEXFBO &source, int scaleIsSpecial, Args... args) {
+         fpsLimiter.delay();
+ 
++        if (postShaderActive()) {
++            /* Upscale into an offscreen buffer first, then run the user
++             * shader over it while presenting to the default framebuffer. */
++            ensurePostBuffer(screenSize);
++            GLMeta::blitBegin(postBuffer, false, scaleIsSpecial);
++            GLMeta::blitSource(source, scaleIsSpecial);
++            FBO::clear();
++            metaBlitBufferFlippedScaled(args...);
++            GLMeta::blitEnd();
++
++            presentPostBuffer(screenSize);
++            SDL_GL_SwapWindow(threadData->window);
++
++            ++frameCount;
++            threadData->ethread->notifyFrame();
++            return;
++        }
++
+         GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
+         GLMeta::blitSource(source, scaleIsSpecial);
+ 
