@@ -303,6 +303,20 @@ index 971cda7..53cc633 100644
  host_machine_is_unix = host_machine_is_bsd or host_machine_is_linux
  host_machine_is_windows = host_machine_system in ('cygwin', 'windows')
  
+diff --git a/subprojects/packagefiles/ruby-3.1/meson.build b/subprojects/packagefiles/ruby-3.1/meson.build
+index 05979e8..b4b7cff 100644
+--- a/subprojects/packagefiles/ruby-3.1/meson.build
++++ b/subprojects/packagefiles/ruby-3.1/meson.build
+@@ -63,6 +63,9 @@ ruby = declare_dependency(
+                 '--disable-rubygems',
+                 '--without-gmp',
+                 '--enable-mkmf-verbose',
++                # [yami] configure only matches aarch64-linux*, so Android falls back to the
++                # pthread coroutine (needs pthread_cancel, absent in bionic).
++                host_machine.system() == 'android' and host_machine.cpu_family() == 'aarch64' ? '--with-coroutine=arm64' : [],
+                 'CC=' + run_command(subproject('common').get_variable('quotetool'), meson.get_compiler('c').cmd_array(), check: true).stdout().strip(),
+                 'CXX=' + run_command(subproject('common').get_variable('quotetool'), meson.get_compiler('cpp').cmd_array(), check: true).stdout().strip(),
+                 'AR=' + run_command(subproject('common').get_variable('quotetool'), subproject('common').get_variable('ar'), check: true).stdout().strip(),
 diff --git a/subprojects/packagefiles/sdl2_ttf-android-static.patch b/subprojects/packagefiles/sdl2_ttf-android-static.patch
 new file mode 100644
 index 0000000..c52d244
