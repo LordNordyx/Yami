@@ -312,6 +312,19 @@ index 090ab5b..7b76cf8 100644
  #endif
      
      for (int i = 0; (size_t)i < strlen(buf); i++) {
+diff --git a/subprojects/common/meson.build b/subprojects/common/meson.build
+index bc22d3a..13002b1 100644
+--- a/subprojects/common/meson.build
++++ b/subprojects/common/meson.build
+@@ -36,6 +36,8 @@ host_triplet_cpu = host_machine.cpu()
+ host_triplet_vendor = 'unknown'
+ if host_machine.system() in ['windows', 'cygwin']
+     host_triplet_os = 'mingw64'
++elif host_machine.system() == 'android'
++    host_triplet_os = 'linux-android' # [yami] canonical triple; autotools match *-linux*
+ else
+     host_triplet_os = host_machine.system()
+ endif
 diff --git a/subprojects/common/sonametool.py b/subprojects/common/sonametool.py
 index 971cda7..53cc633 100644
 --- a/subprojects/common/sonametool.py
@@ -326,10 +339,16 @@ index 971cda7..53cc633 100644
  host_machine_is_windows = host_machine_system in ('cygwin', 'windows')
  
 diff --git a/subprojects/packagefiles/ruby-3.1/meson.build b/subprojects/packagefiles/ruby-3.1/meson.build
-index 05979e8..b4b7cff 100644
+index 05979e8..c55afbe 100644
 --- a/subprojects/packagefiles/ruby-3.1/meson.build
 +++ b/subprojects/packagefiles/ruby-3.1/meson.build
-@@ -63,6 +63,9 @@ ruby = declare_dependency(
+@@ -58,11 +58,14 @@ ruby = declare_dependency(
+                 '--with-soname=ruby',
+                 '--disable-shared',
+                 '--disable-install-doc',
+-                '--with-out-ext=openssl,readline,dbm,gdbm',
++                '--with-out-ext=openssl,readline,dbm,gdbm' + (host_machine.system() == 'android' ? ',-test-/*' : ''), # [yami] -test- exts are always dynamic
+                 '--with-static-linked-ext',
                  '--disable-rubygems',
                  '--without-gmp',
                  '--enable-mkmf-verbose',
