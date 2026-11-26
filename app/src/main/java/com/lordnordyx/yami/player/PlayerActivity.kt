@@ -65,6 +65,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     private var info: InfoOverlayView? = null
     private var menu: QuickMenuView? = null
     private var logView: LogOverlayView? = null
+    private var watchdog: MainThreadWatchdog? = null
     private var status: EngineStatus? = null
     private var turboActive = false
 
@@ -113,8 +114,10 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         // System.user_language in the engine (Essentials reads it for its language setting)
         Os.setenv("LANG", java.util.Locale.getDefault().toString().ifBlank { "en_US" } + ".UTF-8", true)
 
+        prepareFullscreenWindow()
         super.onCreate(savedInstanceState)
         if (SDLActivity.mBrokenLibraries) return
+        watchdog = MainThreadWatchdog(CrashReports.engineLog(this)).also { it.start() }
 
         injector = KeyInjector(::onFrontendAction).apply {
             autofire = inputConfig.autofire
@@ -182,6 +185,22 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             applyTouchVisibility()
             Toast.makeText(this, "🎮 $name — $profile", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Lay the window out edge-to-edge and hide the bars *before* SDL attaches its
+     * SurfaceView. Otherwise the surface starts at the inset size (e.g. 1920x970)
+     * and is resized to full screen while the engine is already rendering, which
+     * can leave SDL's UI and render threads waiting on each other (frozen screen).
+     */
+    private fun prepareFullscreenWindow() {
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_FULLSCREEN or
+            android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
+        if (Build.VERSION.SDK_INT >= 28) window.attributes = window.attributes.apply {
+            layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        hideSystemBars()
     }
 
     private fun hideSystemBars() {
@@ -346,6 +365,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         // Reached on a normal exit (game called exit, or we finished); a crash never gets here.
         if (isFinishing) CrashReports.endSession(this)
         status?.stop()
+        watchdog?.stop()
         runCatching { (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this) }
         super.onDestroy()
         // Native state (Ruby VM, GL context, statics) can't be reused: always start clean.
