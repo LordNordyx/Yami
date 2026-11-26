@@ -1,8 +1,8 @@
 diff --git a/meson.build b/meson.build
-index 2b3dc51..38529e7 100644
+index 2b3dc51..c36a03d 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -182,6 +182,25 @@ libmkxp = static_library(
+@@ -182,6 +182,29 @@ libmkxp = static_library(
      override_options: {'c_std': c_std, 'cpp_std': cpp_std},
  )
  
@@ -18,7 +18,11 @@ index 2b3dc51..38529e7 100644
 +        link_whole: libmkxp,
 +        dependencies: global_dependencies,
 +        include_directories: global_include_dirs,
-+        link_args: global_link_args + ['-shared', '-Wl,-soname,libmain.so', '-Wl,--no-undefined', '-llog', '-landroid', '-lGLESv2', '-lEGL', '-lOpenSLES'],
++        link_args: global_link_args + ['-shared', '-Wl,-soname,libmain.so', '-Wl,--no-undefined',
++                                       # SDL's JNI entry points live in a static archive nobody references from C:
++                                       # force them in and export them, plus SDL_main for SDLActivity.
++                                       '-Wl,--undefined-glob=Java_org_libsdl_app_*', '-Wl,--export-dynamic-symbol=Java_org_libsdl_app_*',
++                                       '-Wl,--undefined=SDL_main', '-Wl,--export-dynamic-symbol=SDL_main', '-Wl,--export-dynamic-symbol=JNI_OnLoad', '-llog', '-landroid', '-lGLESv2', '-lEGL', '-lOpenSLES'],
 +        override_options: {'c_std': c_std, 'cpp_std': cpp_std},
 +        install: true,
 +        install_dir: '.',
@@ -28,7 +32,7 @@ index 2b3dc51..38529e7 100644
  executable(
      exe_name,
      sources: [
-@@ -198,6 +217,7 @@ executable(
+@@ -198,6 +221,7 @@ executable(
      install_dir: '.',
      install_tag: meson.project_name(),
  )
