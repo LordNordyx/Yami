@@ -100,4 +100,5 @@ check "FileTest.exist? sees redirected save", FileTest.exist?("Save1.rxdata")
 File.yami_open("#{game}/Save2.rxdata", "wb") { |f| f.write("legacy") }
 check "legacy save in game folder still loads", File.open("Save2.rxdata", "rb") { |f| f.read } == "legacy"
 check "non-save files untouched", File.exist?("Data/Map001.rxdata")
+check "runtime never opens message boxes (print/p)", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")

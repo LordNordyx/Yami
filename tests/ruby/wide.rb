@@ -49,4 +49,5 @@ else # essentials
     check "sprite inside viewport not double-offset", s2.instance_variable_get(:@x) == 5
   end
 end
+check "runtime never opens message boxes (print/p)", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")

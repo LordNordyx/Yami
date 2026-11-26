@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
     private fun handleRelaunch(i: Intent?) {
         val id = i?.getStringExtra(EXTRA_RELAUNCH) ?: return
         i.removeExtra(EXTRA_RELAUNCH)
-        // Let the old engine process finish dying before starting a new one.
-        window.decorView.postDelayed({ vm.play(this, id, skipOptimize = true) }, 700)
+        // play() waits for the old engine process to exit before starting a new one.
+        vm.play(this, id, skipOptimize = true)
     }
 }

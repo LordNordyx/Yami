@@ -50,7 +50,7 @@ module YamiOptimizer
   end
 
   def ui(text, frac)
-    print(format("[yami-opt %3d%%] %s\n", (frac * 100).round, text)) rescue nil
+    STDERR.write(format("[yami-opt %3d%%] %s\n", (frac * 100).round, text)) rescue nil # print = msgbox in RGSS
     return unless @sprite
     b = @sprite.bitmap
     b.clear

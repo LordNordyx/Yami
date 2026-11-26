@@ -113,6 +113,7 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
                 // Phase 2 runs inside the engine; we pick the result up in onReturnFromEngine().
                 pending = Pending(id, report, thenPlay)
                 busy.value = Busy("Building compact tilesets", "The engine is analysing maps…", 0.75f)
+                awaitEngineExit()
                 PlayerActivity.launch(ctx ?: getApplication<Application>(), id, optimize = true)
             } else {
                 repo.update(id) { it.copy(optimize = report.copy(note = "Archive & index ready")) }
@@ -159,8 +160,26 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun launchGame(ctx: Context, id: String) {
-        repo.update(id) { it.copy(lastPlayed = System.currentTimeMillis(), launches = it.launches + 1) }
-        PlayerActivity.launch(ctx, id)
+        viewModelScope.launch {
+            // A previous engine run (e.g. the map optimizer) may still be shutting down.
+            // Starting the player now would open it inside that dying process.
+            awaitEngineExit()
+            repo.update(id) { it.copy(lastPlayed = System.currentTimeMillis(), launches = it.launches + 1) }
+            PlayerActivity.launch(ctx, id)
+        }
+    }
+
+    private suspend fun awaitEngineExit(timeoutMs: Long = 5000) = withContext(Dispatchers.IO) {
+        val am = getApplication<Application>().getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val deadline = System.currentTimeMillis() + timeoutMs
+        fun engineAlive() = am.runningAppProcesses?.any { it.processName.endsWith(":engine") } == true
+        while (engineAlive() && System.currentTimeMillis() < deadline) kotlinx.coroutines.delay(100)
+        if (engineAlive()) {
+            // Still there: make sure it's gone (same uid, so we may kill it).
+            am.runningAppProcesses?.filter { it.processName.endsWith(":engine") }
+                ?.forEach { android.os.Process.killProcess(it.pid) }
+            kotlinx.coroutines.delay(300)
+        }
     }
 
     // ------------------------------------------------------------- settings

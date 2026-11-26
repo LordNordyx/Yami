@@ -49,3 +49,9 @@ end
 module Audio; end
 def load_data(p, raw = false); d = File.binread(p); raw ? d : Marshal.load(d); end
 def save_data(o, p); File.binwrite(p, Marshal.dump(o)); end
+
+# In RGSS, print/p open a message box that blocks the game. Count calls so the
+# tests fail if the runtime ever uses them.
+$msgboxes = 0
+def print(*a); $msgboxes += 1; end
+def p(*a); $msgboxes += 1; a.first; end
