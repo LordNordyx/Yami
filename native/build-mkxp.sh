@@ -58,11 +58,13 @@ cp "$LIB" "$OUT/libmain.so"
 # Sanity check: the SDL JNI entry points must be exported, otherwise
 # SDLActivity fails with UnsatisfiedLinkError at startup.
 NM="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-nm"
-echo ">> exported SDL JNI symbols: $("$NM" -D --defined-only "$OUT/libmain.so" | grep -c Java_org_libsdl_app || true)"
+# Capture once: with pipefail, `nm | grep -q` fails when grep exits early (SIGPIPE).
+EXPORTS="$("$NM" -D --defined-only "$OUT/libmain.so")"
+echo ">> exported SDL JNI symbols: $(grep -c Java_org_libsdl_app <<<"$EXPORTS" || true)"
 fail=0
 for sym in Java_org_libsdl_app_SDLActivity_nativeSetupJNI Java_org_libsdl_app_SDLActivity_nativeRunMain \
            Java_org_libsdl_app_SDLAudioManager_nativeSetupJNI Java_org_libsdl_app_SDLControllerManager_nativeSetupJNI SDL_main; do
-  if ! "$NM" -D --defined-only "$OUT/libmain.so" | grep -q " $sym$"; then
+  if ! grep -q " $sym$" <<<"$EXPORTS"; then
     echo "missing exported symbol: $sym"
     "$NM" "$LIB" 2>/dev/null | grep "$sym" | head -3 || true   # present but hidden?
     fail=1
