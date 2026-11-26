@@ -267,6 +267,23 @@ index 3345468..37fdb8f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
+diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
+index 67c9be0..fb10591 100644
+--- a/src/filesystem/filesystem.cpp
++++ b/src/filesystem/filesystem.cpp
+@@ -295,6 +295,12 @@ static void throwPhysfsError(const char *desc) {
+ }
+ 
+ FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
++#ifdef __ANDROID__
++  /* [yami] PhysFS on Android reinterprets argv0 as a PHYSFS_AndroidInit*;
++   * passing the program name makes it dereference string bytes. NULL is
++   * handled (base dir "/"), and mkxp-z mounts the game folder itself. */
++  argv0 = nullptr;
++#endif
+   if (PHYSFS_init(argv0) == 0)
+     throwPhysfsError("Error initializing PhysFS");
+ 
 diff --git a/src/main.cpp b/src/main.cpp
 index af81d66..95cf26e 100644
 --- a/src/main.cpp
