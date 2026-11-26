@@ -19,6 +19,9 @@ class InfoOverlayView(context: Context, private val accent: Int) : View(context)
     var fps = 0
     var turbo = false
     var showInfo = true
+    /** Set once the engine reports its first frames; until then show a loading line. */
+    var engineAlive = false
+    private val startedAt = android.os.SystemClock.elapsedRealtime()
     private val clock = SimpleDateFormat("HH:mm", Locale.getDefault())
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); textSize = 30f; typeface = Typeface.MONOSPACE
@@ -38,6 +41,17 @@ class InfoOverlayView(context: Context, private val accent: Int) : View(context)
     fun refresh() = postInvalidate()
 
     override fun onDraw(c: Canvas) {
+        if (!engineAlive) {
+            val secs = (android.os.SystemClock.elapsedRealtime() - startedAt) / 1000
+            val line = if (secs < 20) "Starting game… ${secs}s"
+                       else "Still loading (${secs}s) — press Back for the menu → Engine log"
+            val w = paint.measureText(line)
+            val x = (width - w) / 2f
+            val y = height - 60f
+            c.drawRoundRect(RectF(x - 24f, y - 38f, x + w + 24f, y + 16f), 14f, 14f, bg)
+            c.drawText(line, x, y, paint)
+            postInvalidateDelayed(1000)
+        }
         val pad = 14f
         var x = pad + 24f
         val y = pad + 34f

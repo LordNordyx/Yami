@@ -50,6 +50,7 @@ module YamiOptimizer
   end
 
   def ui(text, frac)
+    print(format("[yami-opt %3d%%] %s\n", (frac * 100).round, text)) rescue nil
     return unless @sprite
     b = @sprite.bitmap
     b.clear

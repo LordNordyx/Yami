@@ -64,6 +64,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     private var touch: TouchControlsView? = null
     private var info: InfoOverlayView? = null
     private var menu: QuickMenuView? = null
+    private var logView: LogOverlayView? = null
     private var status: EngineStatus? = null
     private var turboActive = false
 
@@ -131,7 +132,12 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         status = EngineStatus(File(repo.runtimeDir, "status-${g.id}.txt")) { m ->
             turboActive = m["turbo"] == "1"
             touch?.turboActive = turboActive
-            info?.let { v -> v.turbo = turboActive; v.fps = m["fps"]?.toIntOrNull() ?: v.fps; v.refresh() }
+            info?.let { v ->
+                v.turbo = turboActive
+                v.fps = m["fps"]?.toIntOrNull() ?: v.fps
+                if (m.containsKey("fps")) v.engineAlive = true
+                v.refresh()
+            }
         }.also { it.start() }
     }
 
@@ -160,6 +166,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         root.addView(info, match)
         menu = QuickMenuView(this, accent, ::onMenuAction).apply { visibility = View.GONE }
         root.addView(menu, match)
+        logView = LogOverlayView(this, accent) { logView?.visibility = View.GONE }.apply { visibility = View.GONE }
+        root.addView(logView, match)
     }
 
     private fun applyTouchVisibility() {
@@ -200,7 +208,10 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             return true
         }
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-            if (event.action == KeyEvent.ACTION_UP) toggleMenu()
+            if (event.action == KeyEvent.ACTION_UP) {
+                val lv = logView
+                if (lv != null && lv.visibility == View.VISIBLE) lv.visibility = View.GONE else toggleMenu()
+            }
             return true
         }
         return super.dispatchKeyEvent(event)
@@ -252,6 +263,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             QuickMenuView.Action.RESET_LAYOUT -> touch?.resetLayout()
             QuickMenuView.Action.INFO -> info?.let { it.showInfo = !it.showInfo; it.refresh() }
             QuickMenuView.Action.SCREENSHOT -> screenshot()
+            QuickMenuView.Action.LOG -> logView?.let { it.visibility = View.VISIBLE; it.refresh() }
             QuickMenuView.Action.SOFT_RESET -> injector.tap(RgssButton.RESET)
             QuickMenuView.Action.RESTART -> restart()
             QuickMenuView.Action.QUIT -> quitToLibrary()

@@ -174,14 +174,13 @@ class LibraryViewModel(app: Application) : AndroidViewModel(app) {
     fun updateApp(f: (AppSettings) -> AppSettings) = repo.updateSettings(f)
     fun remove(id: String, deleteFiles: Boolean) = viewModelScope.launch { repo.remove(id, deleteFiles) }
 
+    /** Last crash report if there is one, otherwise the latest session's engine output + system log. */
     fun showLastCrashReport() {
-        val ctx = getApplication<Application>()
-        val f = com.lordnordyx.yami.player.CrashReports.lastReport(ctx)
-        val log = com.lordnordyx.yami.player.CrashReports.engineLog(ctx)
-        crashReport.value = when {
-            f.exists() -> f.readText()
-            log.exists() -> "Last engine output:\n\n" + log.readLines().takeLast(200).joinToString("\n")
-            else -> "No crash report or engine log yet."
+        viewModelScope.launch(Dispatchers.IO) {
+            val ctx = getApplication<Application>()
+            val crash = com.lordnordyx.yami.player.CrashReports.lastReport(ctx)
+            val session = com.lordnordyx.yami.player.CrashReports.sessionLog(ctx)
+            crashReport.value = if (crash.exists()) session + "\n\n== Previous crash report ==\n" + crash.readText() else session
         }
     }
 

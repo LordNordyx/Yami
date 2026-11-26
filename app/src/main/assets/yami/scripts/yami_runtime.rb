@@ -15,6 +15,15 @@
 #    System.invalidate_optimized_maps
 # =============================================================================
 
+# Output goes to a file on Android (not a tty), where Ruby buffers it; flush
+# every line so the engine log is current even if the game hangs.
+$stdout.sync = true rescue nil
+$stderr.sync = true rescue nil
+STDOUT.sync = true rescue nil
+STDERR.sync = true rescue nil
+$yami_t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+print("[yami] preload start (#{RUBY_VERSION}, cwd #{Dir.pwd})\n")
+
 module Yami
   VERSION = "0.1.0"
   CFG = {}
@@ -45,7 +54,8 @@ module Yami
   end
 
   def log(msg)
-    print("[yami] #{msg}\n") rescue nil
+    t = Process.clock_gettime(Process::CLOCK_MONOTONIC) - $yami_t0
+    print(format("[yami %6.2fs] %s\n", t, msg)) rescue nil
   end
 
   # Tiny status channel to the Android overlay (turbo state etc.).
@@ -327,6 +337,28 @@ module Yami
   end
 end
 Yami.on_tick { Yami.fps_tick }
+
+# Progress trace for the engine log: first frame, scene changes, a heartbeat.
+module Yami
+  @frames = 0
+  @last_scene = nil
+  @last_beat = 0
+  def self.trace_tick
+    @frames += 1
+    log("first Graphics.update — game scripts are running") if @frames == 1
+    sc = ($scene.class.name rescue nil)
+    if sc != @last_scene
+      log("scene: #{sc}")
+      @last_scene = sc
+    end
+    now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    if now - @last_beat >= 10
+      @last_beat = now
+      log("alive: frame #{@frames}, #{Graphics.width}x#{Graphics.height}, scene #{sc}")
+    end
+  end
+end
+Yami.on_tick { Yami.trace_tick }
 
 # =============================================================================
 #  Save redirection for classic RMXP save files (SaveN.rxdata in game folder)

@@ -28,10 +28,10 @@ fun CrashDialog(report: String?, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("The game crashed") },
+        title = { Text(if (report.startsWith("Yami crash report")) "The game crashed" else "Yami log") },
         text = {
             Column {
-                Text("Copy or share this report so the crash can be fixed.",
+                Text("Copy or share this so the problem can be fixed.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Column(Modifier.heightIn(max = 380.dp).verticalScroll(rememberScrollState())) {
                     Row(Modifier.horizontalScroll(rememberScrollState())) {

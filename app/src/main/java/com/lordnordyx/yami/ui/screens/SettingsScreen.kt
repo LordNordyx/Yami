@@ -95,7 +95,7 @@ fun SettingsScreen(vm: LibraryViewModel, back: () -> Unit, openControls: () -> U
         SettingsEditor(vm, s.defaults) { f -> vm.updateApp { it.copy(defaults = f(it.defaults)) } }
 
         Section("Troubleshooting") {
-            ActionRow("Last crash report / engine log", "Copy or share it when reporting a problem") { vm.showLastCrashReport() }
+            ActionRow("Session log & crash report", "Engine output and system log — copy or share it when reporting a problem") { vm.showLastCrashReport() }
         }
         Section("About") {
             ActionRow("Yami", "RGSS player for Android, built on mkxp-z", value = BuildConfig.VERSION_NAME)

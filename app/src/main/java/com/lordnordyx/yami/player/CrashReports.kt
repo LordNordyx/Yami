@@ -90,12 +90,24 @@ object CrashReports {
         return report
     }
 
+    /** Current engine output + system log, for problems that aren't crashes (hangs, black screen). */
+    fun sessionLog(ctx: Context): String = buildString {
+        appendLine("Yami session log")
+        appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+        marker(ctx).takeIf { it.exists() }?.readLines()?.getOrNull(1)?.let { appendLine("Game: $it") }
+        nativeCrash(ctx).takeIf { it.exists() && it.length() > 0 }?.let { appendLine("\n== Native crash =="); appendLine(it.readText().trim()) }
+        appendLine("\n== Engine output ==")
+        appendLine(engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(300)?.joinToString("\n")?.ifBlank { null } ?: "(empty)")
+        appendLine("\n== System log ==")
+        appendLine(readLogcat().trim())
+    }
+
     /** Apps may read their own log lines; both of Yami's processes share a uid. */
     private fun readLogcat(): String = runCatching {
         val p = ProcessBuilder("logcat", "-d", "-v", "time", "-t", "600").redirectErrorStream(true).start()
         val lines = p.inputStream.bufferedReader().readLines()
         p.destroy()
-        val interesting = Regex("yami|SDL|mkxp|libc|DEBUG|AndroidRuntime|OpenAL|crash|Fatal|FATAL|art ", RegexOption.IGNORE_CASE)
+        val interesting = Regex("yami|SDL|mkxp|libc|DEBUG|AndroidRuntime|openal|crash|Fatal|FATAL|art |GL|EGL|Adreno|BLASTBufferQueue", RegexOption.IGNORE_CASE)
         lines.filter { interesting.containsMatchIn(it) }.takeLast(250).joinToString("\n")
     }.getOrDefault("(logcat unavailable)")
 }

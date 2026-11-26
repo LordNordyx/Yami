@@ -20,7 +20,7 @@ class QuickMenuView(
     private val onAction: (Action) -> Unit,
 ) : FrameLayout(context) {
 
-    enum class Action { RESUME, TURBO, TOUCH, EDIT_LAYOUT, RESET_LAYOUT, INFO, SCREENSHOT, SOFT_RESET, RESTART, QUIT }
+    enum class Action { RESUME, TURBO, TOUCH, EDIT_LAYOUT, RESET_LAYOUT, INFO, SCREENSHOT, LOG, SOFT_RESET, RESTART, QUIT }
 
     data class State(val turbo: Boolean, val touchVisible: Boolean, val info: Boolean, val title: String)
 
@@ -57,6 +57,7 @@ class QuickMenuView(
         add(Action.RESET_LAYOUT, "↺  Reset touch layout")
         add(Action.INFO, if (s.info) "ⓘ  Hide FPS / clock / battery" else "ⓘ  Show FPS / clock / battery")
         add(Action.SCREENSHOT, "▣  Screenshot")
+        add(Action.LOG, "≣  Engine log")
         add(Action.SOFT_RESET, "⟲  Soft reset (title screen)")
         add(Action.RESTART, "⏻  Restart game")
         add(Action.QUIT, "✕  Quit to library")
