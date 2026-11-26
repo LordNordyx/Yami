@@ -15,8 +15,8 @@ pkg-config = 'false'
 cmake = 'cmake'
 
 [built-in options]
-c_args = ['-fPIC', '-DANDROID', '-D__ANDROID_API__=@API@']
-cpp_args = ['-fPIC', '-DANDROID', '-D__ANDROID_API__=@API@']
+c_args = ['-fPIC']
+cpp_args = ['-fPIC']
 c_link_args = ['-static-libstdc++']
 cpp_link_args = ['-static-libstdc++']
 default_library = 'static'

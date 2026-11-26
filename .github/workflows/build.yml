@@ -65,6 +65,13 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: bash native/build-mkxp.sh
 
+      - name: Show configure logs on failure
+        if: failure()
+        run: |
+          for f in $(find native/.work/build-arm64 -name config.log -o -name 'meson-log.txt' | head -20); do
+            echo "::group::$f"; tail -n 120 "$f"; echo "::endgroup::"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: libmain-arm64
