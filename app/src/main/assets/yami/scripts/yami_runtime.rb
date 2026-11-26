@@ -438,6 +438,119 @@ if Yami::Saves.on?
   def save_data(obj, path); yami_save_data(obj, Yami::Saves.redirect(path, true)); end
 end
 
+# Native entry points, saved before any game script can replace them.
+class << Graphics
+  alias_method :yami_native_resize, :resize_screen
+  alias_method :yami_native_width, :width
+  alias_method :yami_native_height, :height
+  alias_method :yami_native_snap, :snap_to_bitmap if method_defined?(:snap_to_bitmap)
+end
+
+# =============================================================================
+#  Older Pokémon Essentials (v13-v17) screen system
+#
+#  Its Sprite_Resizer adds a decorative border (BORDERWIDTH/BORDERHEIGHT around
+#  the game, e.g. 640x480 -> 800x600), scales every Sprite/Viewport/Plane by a
+#  window-size factor and replaces Graphics.snap_to_bitmap with a Windows DLL
+#  screenshot. None of that makes sense on a phone: the game ends up drawn in
+#  a corner of a bigger screen with the background repeating around it.
+#  Yami pins it to factor 1, no border, and the real screen size.
+# =============================================================================
+module Yami
+  module OldEss
+    @active = false
+    module_function
+
+    def active?; @active; end
+
+    def resizer?
+      Object.private_method_defined?(:pbSetResizeFactor) || Object.method_defined?(:pbSetResizeFactor)
+    end
+
+    def const_or(name, d)
+      Object.const_defined?(name) ? Object.const_get(name).to_i : d
+    end
+
+    def set_const(name, v, owner = Object)
+      return unless owner.const_defined?(name, false)
+      old = $VERBOSE; $VERBOSE = nil
+      owner.send(:remove_const, name)
+      owner.const_set(name, v)
+    ensure
+      $VERBOSE = old
+    end
+
+    # The game's own resolution, before any border.
+    def base
+      @base ||= [const_or(:DEFAULTSCREENWIDTH, 640), const_or(:DEFAULTSCREENHEIGHT, 480)]
+    end
+
+    # Makes the engine screen exactly the game's size (widened if enabled).
+    def fit
+      w, h = base
+      tw, th = defined?(Yami::Wide) ? Yami::Wide.target(w, h) : [w, h]
+      Yami::Wide.base = [w, h] if defined?(Yami::Wide) && Yami::Wide.on?
+      Graphics.yami_native_resize(tw, th)
+      [tw, th]
+    end
+
+    def apply
+      return if @active || !resizer?
+      @active = true
+      w, h = base
+      %i[BORDERWIDTH BORDERHEIGHT].each { |c| set_const(c, 0) }
+      $ResizeOffsetX = 0
+      $ResizeOffsetY = 0
+
+      Object.class_eval do
+        def pbSetResizeFactor(_factor = 1, norecalc = false)
+          $ResizeOffsetX = 0
+          $ResizeOffsetY = 0
+          if respond_to?(:pbSetResizeFactor2, true)
+            begin
+              pbSetResizeFactor2(1.0, norecalc) # rescales existing sprites back to 1x
+            rescue StandardError => e
+              Yami.log("pbSetResizeFactor2: #{e.class}: #{e.message}")
+            end
+          end
+          $ResizeFactor = 1.0
+          $ResizeFactorMul = 100
+          Yami::OldEss.fit
+        end
+        def pbConfigureFullScreen(*); pbSetResizeFactor(1); end
+        def pbConfigureWindowedScreen(*); pbSetResizeFactor(1); end
+        private :pbSetResizeFactor, :pbConfigureFullScreen, :pbConfigureWindowedScreen
+      end
+
+      # The border option draws a frame picture over the edges; turn it off.
+      if defined?(PokemonSystem) && PokemonSystem.method_defined?(:border)
+        PokemonSystem.class_eval { def border; 0; end }
+      end
+      ($ResizeBorder.visible = false) rescue nil
+
+      # Its screenshot needs rubyscreen.dll; use the engine's.
+      if Graphics.respond_to?(:yami_native_snap)
+        loc = (Graphics.method(:snap_to_bitmap).source_location rescue nil)
+        if loc
+          Graphics.define_singleton_method(:snap_to_bitmap) { |*a| yami_native_snap(*a) }
+        end
+      end
+
+      tw, th = fit
+      # Sprite_Resizer keeps the size in class variables; keep them in step.
+      gw = defined?(Yami::Wide) && Yami::Wide.panoramic? ? w : tw
+      %i[@@width @@height].zip([gw, th]).each do |cv, v|
+        Graphics.class_variable_set(cv, v) if Graphics.class_variable_defined?(cv)
+      end
+      set_const(:DEFAULTSCREENWIDTH, gw)
+      pbSetResizeFactor(1) rescue nil
+      Yami.log("older Essentials screen: #{w}x#{h} -> #{tw}x#{th}, border off, factor 1")
+    end
+  end
+end
+# After the scripts are loaded (the resizer may come after Game_Map).
+Yami.once_when(-> { defined?(Game_Map) && (Yami::OldEss.resizer? || ($yami_boot_frames || 0) > 2) }) { Yami::OldEss.apply }
+
 # =============================================================================
 #  Widescreen
 # =============================================================================
@@ -476,6 +589,7 @@ if Yami::Wide.on?
     alias_method :yami_width, :width
     alias_method :yami_height, :height
     def resize_screen(w, h)
+      w = w.to_i; h = h.to_i # older Essentials passes floats (size * factor)
       Yami::Wide.base = [w, h]
       yami_resize_screen(*Yami::Wide.target(w, h))
     end
@@ -541,6 +655,7 @@ if Yami::Wide.on?
 
   # --- after the game's scripts are loaded ------------------------------------
   Yami.once_when(-> { defined?(Game_Player) && defined?(Game_Map) }) do
+    Yami::OldEss.apply # must settle the real size first
     rw = Graphics.yami_width
     rh = Graphics.height
     essentials = defined?(Settings) && Settings.const_defined?(:SCREEN_WIDTH)
@@ -552,7 +667,7 @@ if Yami::Wide.on?
     # Older Essentials (v15-v18): screen size lives in top-level constants, and
     # its Sprite_Resizer may redefine Graphics.width/height in Ruby.
     if !Yami::Wide.panoramic?
-      if Object.const_defined?(:DEFAULTSCREENWIDTH)
+      if Object.const_defined?(:DEFAULTSCREENWIDTH) && !Yami::OldEss.active?
         silence.call { Object.send(:remove_const, :DEFAULTSCREENWIDTH); Object.const_set(:DEFAULTSCREENWIDTH, rw) }
       end
       %i[width height].each do |m|

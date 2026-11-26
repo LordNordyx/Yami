@@ -247,7 +247,7 @@ index 1f9c956..e44959e 100644
  {
  public:
 diff --git a/src/display/graphics.cpp b/src/display/graphics.cpp
-index 3345468..37fdb8f 100644
+index 3345468..4b9221f 100644
 --- a/src/display/graphics.cpp
 +++ b/src/display/graphics.cpp
 @@ -900,6 +900,9 @@ struct GraphicsPrivate {
@@ -347,6 +347,40 @@ index 3345468..37fdb8f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
+@@ -1530,7 +1610,22 @@ void Graphics::resizeScreen(int width, int height) {
+     
+     glState.scissorBox.set(IntRect(0, 0, p->scRes.x, p->scRes.y));
+     
++#ifdef __ANDROID__
++    /* [yami] The Android window is always the full display and never gets a
++     * resize event, so the picture rectangle would keep the old aspect ratio
++     * (a 4:3 box with the new resolution squeezed or cropped into it).
++     * Recompute it for the new resolution right here instead. */
++    if (p->integerScaleActive && p->findHighestIntegerScale())
++        p->rebuildIntegerScaleBuffer();
++    p->recalculateScreenSize(p->threadData->config.fixedAspectRatio);
++    p->updateScreenResoRatio(p->threadData);
++    {
++        SDL_Rect r = {p->scOffset.x, p->scOffset.y, p->scSize.x, p->scSize.y};
++        p->threadData->ethread->notifyGameScreenChange(r);
++    }
++#else
+     shState->eThread().requestWindowResize(width, height);
++#endif
+ }
+ 
+ void Graphics::resizeWindow(int width, int height, bool center) {
+@@ -1541,6 +1636,10 @@ void Graphics::resizeWindow(int width, int height, bool center) {
+         height == p->winSize.y / p->backingScaleFactor)
+             return;
+ 
++#ifdef __ANDROID__
++    return; // [yami] the window is the display; it cannot be resized
++#endif
++
+     shState->eThread().requestWindowResize(width, height);
+     
+     if (center)
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
 index 67c9be0..fb10591 100644
 --- a/src/filesystem/filesystem.cpp

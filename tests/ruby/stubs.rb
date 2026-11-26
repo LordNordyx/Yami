@@ -39,6 +39,7 @@ module Graphics
     def width; @w; end; def height; @h; end
     def resize_screen(w, h); @w, @h = w, h; end
     def update; @updates += 1; end
+    def snap_to_bitmap; :native_snap; end
   end
   self.frame_rate = 40
 end

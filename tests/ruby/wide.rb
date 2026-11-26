@@ -57,6 +57,77 @@ elsif kind == "oldess"
   ok = begin; v = RectVp.new(0, 0, 640, 480); true; rescue SystemStackError; false; end
   check "Viewport subclass passing a Rect to super doesn't recurse", ok
   check "...and still gets the widescreen rect", ok && v.rect == [0, 0, 852, 480]
+elsif kind == "resizer"
+  # Older Essentials with Sprite_Resizer and the screen border turned on, as
+  # in Pokemon Myth: the game asked for 800x600 and drew 640x480 in a corner.
+  DEFAULTSCREENWIDTH = 640
+  DEFAULTSCREENHEIGHT = 480
+  BORDERWIDTH = 80
+  BORDERHEIGHT = 60
+  module PBSpecies; end
+  class PokemonSystem; attr_accessor :screensize; def border; @border || 1; end; end
+  $PokemonSystem = PokemonSystem.new
+  $ResizeFactor = 1.0; $ResizeFactorMul = 100; $ResizeOffsetX = 0; $ResizeOffsetY = 0
+  $refreshed = 0
+  def pbRefreshResizeFactor; $refreshed += 1; end
+  def pbSetResizeFactor2(factor, norecalc = false)
+    if $ResizeFactor != factor
+      $ResizeFactor = factor; $ResizeFactorMul = (factor * 100).to_i; pbRefreshResizeFactor
+    end
+    Graphics.oldresizescreen((Graphics.width + $ResizeOffsetX * 2) * factor,
+                             (Graphics.height + $ResizeOffsetY * 2) * factor)
+  end
+  def pbConfigureWindowedScreen(value)
+    if $PokemonSystem.border == 1
+      $ResizeOffsetX = BORDERWIDTH; $ResizeOffsetY = BORDERHEIGHT
+    else
+      $ResizeOffsetX = 0; $ResizeOffsetY = 0
+    end
+    pbSetResizeFactor2(value, true)
+  end
+  def pbConfigureFullScreen; pbSetResizeFactor2(1.0); end
+  def pbSetResizeFactor(factor = 1, norecalc = false)
+    factor = [0.5, 1.0, 1.5, 2.0, -1][factor]
+    (factor < 0) ? pbConfigureFullScreen : pbConfigureWindowedScreen(factor) unless norecalc
+  end
+  module Graphics
+    @@width = DEFAULTSCREENWIDTH
+    @@height = DEFAULTSCREENHEIGHT
+    class << self
+      alias oldresizescreen resize_screen
+      def width; @@width.to_i; end
+      def height; @@height.to_i; end
+      def resize_screen(w, h); @@width = w; @@height = h; pbSetResizeFactor($ResizeFactor, true); end
+      def snap_to_bitmap; raise "rubyscreen.dll"; end
+    end
+  end
+  class Game_Map; def scroll_right(d); :essentials_own; end; end
+  class Game_Player; def center(x, y); :essentials_own; end; end
+  pbSetResizeFactor(1) # the game's startup call
+  check "precondition: border made the screen 800x600-ish", Graphics.yami_native_height == 600
+  Graphics.update
+  if mode == "off"
+    check "screen is exactly the game's 640x480", Graphics.yami_native_width == 640 && Graphics.yami_native_height == 480
+  elsif mode == "panoramic"
+    check "screen is 640x480 widened to 852x480", Graphics.yami_native_width == 852 && Graphics.yami_native_height == 480
+    check "UI still sees 640", Graphics.width == 640
+    check "UI viewport centred", Viewport.new(0, 0, 640, 480).rect == [106, 0, 640, 480]
+  else
+    check "screen is 640x480 widened to 852x480", Graphics.yami_native_width == 852 && Graphics.yami_native_height == 480
+    check "game's Graphics.width reports the real width", Graphics.width == 852 && Graphics.height == 480
+    v = Viewport.new(0, 0, 640, 480)
+    check "640x480 viewport spans the full width", v.rect == [0, 0, 852, 480]
+  end
+  check "border offsets gone", $ResizeOffsetX == 0 && $ResizeOffsetY == 0 && BORDERWIDTH == 0
+  check "border option off", $PokemonSystem.border == 0
+  check "screenshot uses the engine, not the DLL", (Graphics.snap_to_bitmap rescue :dll) == :native_snap
+  # Changing "Screen size" in the Options menu must not break it again.
+  pbSetResizeFactor(3)
+  pbSetResizeFactor(1)
+  Graphics.resize_screen(640, 480)
+  want = mode == "off" ? [640, 480] : [852, 480]
+  check "options menu / resize_screen keep the right size", [Graphics.yami_native_width, Graphics.yami_native_height] == want
+  check "factor stays 1", $ResizeFactor == 1.0
 else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)
