@@ -19,12 +19,16 @@ OUT="$ROOT/app/src/main/jniLibs/arm64-v8a"
 [ -n "$NDK" ] && [ -d "$NDK" ] || { echo "Set ANDROID_NDK_HOME"; exit 1; }
 mkdir -p "$WORK" "$OUT"
 
-if [ ! -d "$WORK/mkxp-z/.git" ]; then
-  git clone "$MKXPZ_REPO" "$WORK/mkxp-z"
-fi
+# init + fetch in place: CI restores subprojects/packagecache into this folder first,
+# so it may already exist without a .git directory.
+mkdir -p "$WORK/mkxp-z"
 cd "$WORK/mkxp-z"
-git fetch --depth 1 origin "$MKXPZ_REF" 2>/dev/null || true
-git checkout -f "$MKXPZ_REF"
+if [ ! -d .git ]; then
+  git init -q
+  git remote add origin "$MKXPZ_REPO"
+fi
+git fetch -q --depth 1 origin "$MKXPZ_REF"
+git checkout -q -f FETCH_HEAD
 git clean -fdq -e subprojects/packagecache
 for p in "$HERE"/patches/*.patch; do
   echo ">> applying $(basename "$p")"
