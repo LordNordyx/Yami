@@ -472,8 +472,9 @@ module Yami
     end
 
     def set_const(name, v, owner = Object)
+      old = $VERBOSE
       return unless owner.const_defined?(name, false)
-      old = $VERBOSE; $VERBOSE = nil
+      $VERBOSE = nil
       owner.send(:remove_const, name)
       owner.const_set(name, v)
     ensure
@@ -549,9 +550,84 @@ module Yami
     end
   end
 end
-# Essentials draws frames while its scripts are still loading, so keep looking
-# until the resizer exists (a cheap method lookup per frame).
-Yami.on_tick { Yami::OldEss.apply unless Yami::OldEss.active? }
+module Yami
+  module OldEss
+    module_function
+
+    # Any game with Essentials' border system, whatever its functions are
+    # called (versions and fan edits differ).
+    def border_game?
+      return false unless Object.const_defined?(:DEFAULTSCREENWIDTH)
+      Object.const_defined?(:BORDERWIDTH) || resizer? || !$ResizeOffsetX.nil?
+    end
+
+    # Undo the border and the window factor. Idempotent; cheap.
+    def neutralize!
+      $ResizeOffsetX = 0
+      $ResizeOffsetY = 0
+      if $ResizeFactor && $ResizeFactor != 1.0
+        $ResizeFactor = 1.0
+        $ResizeFactorMul = 100
+        begin
+          pbRefreshResizeFactor if respond_to?(:pbRefreshResizeFactor, true)
+        rescue StandardError => e
+          Yami.log("pbRefreshResizeFactor: #{e.class}: #{e.message}")
+        end
+      end
+      %i[BORDERWIDTH BORDERHEIGHT].each do |c|
+        set_const(c, 0) if Object.const_defined?(c) && Object.const_get(c) != 0
+      end
+      if defined?(PokemonSystem) && PokemonSystem.method_defined?(:border) &&
+         PokemonSystem.instance_method(:border).source_location.to_a[0].to_s !~ /yami_/
+        PokemonSystem.class_eval { def border; 0; end }
+      end
+      ($ResizeBorder.visible = false) if $ResizeBorder.respond_to?(:visible=) && $ResizeBorder.visible rescue nil
+      if Graphics.respond_to?(:yami_native_snap)
+        loc = (Graphics.method(:snap_to_bitmap).source_location rescue nil)
+        if loc && loc[0].to_s !~ /yami_/
+          Graphics.define_singleton_method(:snap_to_bitmap) { |*a| yami_native_snap(*a) }
+        end
+      end
+    end
+
+    def expected_size
+      w, h = base
+      defined?(Yami::Wide) ? Yami::Wide.target(w, h) : [w, h]
+    end
+
+    def tick
+      return unless border_game?
+      unless @logged
+        @logged = true
+        Yami.log("older Essentials border system: base #{base.inspect}, resizer=#{resizer?}, " \
+                 "offsets=#{$ResizeOffsetX.inspect}/#{$ResizeOffsetY.inspect}, factor=#{$ResizeFactor.inspect}")
+      end
+      neutralize!
+      apply unless active?
+      fit if [Graphics.yami_native_width, Graphics.yami_native_height] != expected_size
+    end
+  end
+end
+
+# Every screen-size request ends here — including the game's own alias of
+# resize_screen (Sprite_Resizer's "oldresizescreen"), taken after this runs.
+class << Graphics
+  def resize_screen(w, h)
+    w = w.to_i; h = h.to_i # older Essentials passes floats (size * factor)
+    if Yami::OldEss.border_game?
+      Yami::OldEss.neutralize!
+      w, h = Yami::OldEss.base # never the bordered/scaled size
+    end
+    if defined?(Yami::Wide) && Yami::Wide.on?
+      Yami::Wide.base = [w, h]
+      w, h = Yami::Wide.target(w, h)
+    end
+    yami_native_resize(w, h)
+  end
+end
+
+# Essentials draws frames while its scripts are still loading, so keep checking.
+Yami.on_tick { Yami::OldEss.tick }
 
 # =============================================================================
 #  Widescreen
@@ -606,14 +682,8 @@ end
 
 if Yami::Wide.on?
   class << Graphics
-    alias_method :yami_resize_screen, :resize_screen
     alias_method :yami_width, :width
     alias_method :yami_height, :height
-    def resize_screen(w, h)
-      w = w.to_i; h = h.to_i # older Essentials passes floats (size * factor)
-      Yami::Wide.base = [w, h]
-      yami_resize_screen(*Yami::Wide.target(w, h))
-    end
     # Panoramic: UI code sees the original width; map code sees the full width.
     def width
       return yami_width unless Yami::Wide.panoramic?
@@ -630,7 +700,7 @@ if Yami::Wide.on?
     alias_method :yami_vp_init, :initialize
     def initialize(*a)
       Yami.run_once unless Yami.once_pending.zero?
-      Yami::OldEss.apply unless Yami::OldEss.active?
+      Yami::OldEss.tick
       Yami::Wide.claim!
       # Normalise Viewport.new(rect) here. Never re-dispatch to `initialize`:
       # a game subclass may override it and hand a Rect back to super, which

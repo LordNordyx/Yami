@@ -294,4 +294,33 @@ class Win32API
 end
 
 MiniFFI = Win32API unless defined?(MiniFFI)
+
+# -----------------------------------------------------------------------------
+# Opening a folder as a file: Windows says "access denied" (Errno::EACCES),
+# Linux opens it and fails on read with Errno::EISDIR. Older Essentials
+# (FileTests: pbGetFileChar/pbGetFileString) only rescues the Windows errors,
+# so an empty character/graphic name ("Graphics/Characters/") crashed the game.
+# Raise an error that matches both `rescue Errno::EACCES` and
+# `rescue Errno::EISDIR`.
+# -----------------------------------------------------------------------------
+module Yami
+  class DirAsFileError < Errno::EACCES; end
+
+  module DirAsFile
+    %i[open new read binread readlines foreach].each do |m|
+      define_method(m) do |*a, **k, &b|
+        f = a[0]
+        path = f.is_a?(String) ? f : (f.respond_to?(:to_path) ? f.to_path : nil)
+        if path && !path.empty? && File.directory?(path)
+          raise Yami::DirAsFileError, "Is a directory - #{path}"
+        end
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+  end
+end
+class << Errno::EISDIR
+  def ===(e); e.is_a?(Yami::DirAsFileError) || super; end
+end
+File.singleton_class.prepend(Yami::DirAsFile)
 (STDERR.write("[yami] Win32API compatibility layer active\n") rescue nil)

@@ -104,7 +104,7 @@ elsif kind == "resizer"
   class Game_Map; def scroll_right(d); :essentials_own; end; end
   class Game_Player; def center(x, y); :essentials_own; end; end
   pbSetResizeFactor(1) # the game's startup call
-  check "precondition: border made the screen 800x600-ish", Graphics.yami_native_height == 600
+  check "bordered 800x600 request never reaches the engine", Graphics.yami_native_height == 480
   Graphics.update
   if mode == "off"
     check "screen is exactly the game's 640x480", Graphics.yami_native_width == 640 && Graphics.yami_native_height == 480
@@ -156,6 +156,34 @@ elsif kind == "midload"
   check "screen fixed once the resizer appears", Graphics.yami_native_width == nw && Graphics.yami_native_height == 480
   check "Graphics.width as the game should see it", Graphics.width == (mode == "full" ? 852 : 640) && Graphics.height == 480
   check "base is the game's 640x480", mode == "off" || Yami::Wide.base == [640, 480]
+elsif kind == "custom"
+  # A fan edit of the border system with its own function names: only the
+  # constants, the globals and an alias of resize_screen are recognisable.
+  DEFAULTSCREENWIDTH = 640
+  DEFAULTSCREENHEIGHT = 480
+  BORDERWIDTH = 80
+  BORDERHEIGHT = 60
+  module Graphics
+    class << self
+      alias mythresize resize_screen
+    end
+  end
+  def mythScreen(factor)
+    $ResizeOffsetX = BORDERWIDTH; $ResizeOffsetY = BORDERHEIGHT; $ResizeFactor = factor
+    Graphics.mythresize((DEFAULTSCREENWIDTH + $ResizeOffsetX * 2) * factor,
+                        (DEFAULTSCREENHEIGHT + $ResizeOffsetY * 2) * factor)
+  end
+  mythScreen(1.0)
+  nw = mode == "off" ? 640 : 852
+  check "bordered request replaced by the game's size", Graphics.yami_native_width == nw && Graphics.yami_native_height == 480
+  check "offsets cleared before sprites are placed", $ResizeOffsetX == 0 && $ResizeOffsetY == 0
+  $ResizeOffsetX = 80 # something sets it again later
+  Graphics.update
+  check "offsets kept at 0 every frame", $ResizeOffsetX == 0
+  Yami::Wide.claim! rescue nil
+  check "still the right size after a frame", Graphics.yami_native_width == nw && Graphics.yami_native_height == 480
+  mythScreen(2.0)
+  check "a 2x window request is ignored too", Graphics.yami_native_width == nw && $ResizeFactor == 1.0
 else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)

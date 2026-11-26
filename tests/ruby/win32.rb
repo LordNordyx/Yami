@@ -101,6 +101,22 @@ check "GetTickCount increases", (a = Win32API.new("kernel32", "GetTickCount", ""
                                 Win32API.new("kernel32", "GetTickCount", "", "l").call >= a
 path = "\0" * 260
 check "SHGetFolderPath returns S_OK + a path", Win32API.new("shell32", "SHGetFolderPath", "lllll", "l").call(0, 0x1C, 0, 0, path) == 0 && path.delete("\0").length > 0
+# --- Essentials FileTests reading a folder (empty graphic name) ---
+Dir.mkdir("Graphics") rescue nil; Dir.mkdir("Graphics/Characters") rescue nil
+File.binwrite("Graphics/Characters/hero.png", "\x89PNG")
+def pbGetFileChar(file)
+  begin
+    File.open(file, "rb") { |f| return f.read(1) }
+  rescue Errno::ENOENT, Errno::EINVAL, Errno::EACCES
+    return nil
+  end
+end
+r = begin; pbGetFileChar("Graphics/Characters/"); rescue => e; e; end
+check "reading a folder → nil like Windows, not EISDIR", r.nil?
+check "...also catchable as Errno::EISDIR", (begin; File.read("Graphics/Characters"); false; rescue Errno::EISDIR; true; end)
+check "normal file reads untouched", pbGetFileChar("Graphics/Characters/hero.png") == "\x89" .b &&
+  File.binread("Graphics/Characters/hero.png") == "\x89PNG".b && File.open("Graphics/Characters/hero.png", "rb", &:read).bytesize == 4
+check "File.open with keywords still works", File.open("Graphics/Characters/hero.png", mode: "rb") { |f| f.read(1) } == "\x89".b
 check "MiniFFI alias", MiniFFI == Win32API
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
