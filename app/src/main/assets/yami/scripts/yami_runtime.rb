@@ -582,6 +582,16 @@ module Yami
         PokemonSystem.class_eval { def border; 0; end }
       end
       ($ResizeBorder.visible = false) if $ResizeBorder.respond_to?(:visible=) && $ResizeBorder.visible rescue nil
+      # Its fade-to-black viewport is a fixed 640x480: make it cover the display.
+      size = [Graphics.yami_native_width, Graphics.yami_native_height]
+      if @fade_size != size && Graphics.class_variable_defined?(:@@fadeoutvp)
+        vp = Graphics.class_variable_get(:@@fadeoutvp)
+        if vp.respond_to?(:yami_vp_set_rect) && !(vp.disposed? rescue false)
+          vp.yami_vp_set_rect(Rect.new(0, 0, *size))
+          vp.instance_variable_set(:@yami_last, nil)
+        end
+        @fade_size = size
+      end
       if Graphics.respond_to?(:yami_native_snap)
         loc = (Graphics.method(:snap_to_bitmap).source_location rescue nil)
         if loc && loc[0].to_s !~ /yami_/
@@ -613,6 +623,7 @@ end
 # resize_screen (Sprite_Resizer's "oldresizescreen"), taken after this runs.
 class << Graphics
   def resize_screen(w, h)
+    req = [w, h]
     w = w.to_i; h = h.to_i # older Essentials passes floats (size * factor)
     if Yami::OldEss.border_game?
       Yami::OldEss.neutralize!
@@ -621,6 +632,10 @@ class << Graphics
     if defined?(Yami::Wide) && Yami::Wide.on?
       Yami::Wide.base = [w, h]
       w, h = Yami::Wide.target(w, h)
+    end
+    if (@yami_resize_logs = (@yami_resize_logs || 0) + 1) <= 12
+      from = caller.find { |c| c !~ /yami_/ }.to_s.sub(/:in .*/, "")
+      Yami.log("screen: #{req.join('x')} requested by #{from.empty? ? 'Yami' : from} -> #{w}x#{h}")
     end
     yami_native_resize(w, h)
   end
@@ -643,7 +658,28 @@ module Yami
       attr_accessor :ctx, :base
       def mode; @mode; end
       def on?; @mode != "off" && @ratio > 1.0; end
-      def panoramic?; on? && @mode == "panoramic"; end
+
+      # "auto": Pokémon Essentials (menus drawn for 4:3) -> panoramic, other
+      # games -> full. Decided as soon as the game's first scripts exist.
+      def panoramic?
+        return false unless on?
+        return true if @mode == "panoramic"
+        return false unless @mode == "auto"
+        return @auto unless @auto.nil?
+        pano = essentials?
+        if pano || ($yami_boot_frames || 0) > 0
+          @auto = pano
+          Yami.log("widescreen auto: #{pano ? 'panoramic (Pokémon Essentials)' : 'full'}")
+        end
+        pano
+      end
+
+      def essentials?
+        Object.const_defined?(:DEFAULTSCREENWIDTH) || Object.const_defined?(:PBSpecies) ||
+          (Object.const_defined?(:Settings) && ::Settings.is_a?(Module) && ::Settings.const_defined?(:SCREEN_WIDTH))
+      rescue StandardError
+        false
+      end
 
       def target(w, h)
         return [w, h] unless on?
@@ -656,11 +692,64 @@ module Yami
       def margin; panoramic? ? (real_w - base_w) / 2 : 0; end
       def map_ctx?; @ctx > 0; end
 
+      # Panoramic: everything map-related runs in "map context" and sees the
+      # full width. Each class is wrapped as soon as it exists (Essentials
+      # defines Spriteset_Map etc. after it first creates a viewport).
+      MAP_CLASSES = %w[Spriteset_Map Game_Map Game_Player Game_Character Game_Event Game_Follower
+                       TilemapRenderer CustomTilemap SynchronizedTilemapAutotiles Spriteset_Global
+                       TilemapLoader Sprite_Character DependentEventSprites Spriteset_MapAnimation]
+      def wrap_map_classes!
+        return unless panoramic?
+        @wrapped ||= {}
+        return if @wrapped.size == MAP_CLASSES.size
+        MAP_CLASSES.each do |n|
+          next if @wrapped[n] || !Object.const_defined?(n)
+          @wrapped[n] = true
+          klass = Object.const_get(n)
+          next unless klass.is_a?(Module)
+          wrap = lambda do |target, publics, privates|
+            mod = Module.new
+            (publics + privates).uniq.each do |m|
+              next if m == :initialize_copy
+              mod.send(:define_method, m) do |*a, &b|
+                Yami::Wide.ctx += 1
+                begin
+                  super(*a, &b)
+                ensure
+                  Yami::Wide.ctx -= 1
+                end
+              end
+              mod.send(:ruby2_keywords, m) if mod.respond_to?(:ruby2_keywords, true)
+            end
+            privates.each { |m| mod.send(:private, m) }
+            target.prepend(mod)
+          end
+          wrap.call(klass, klass.public_instance_methods(false) + klass.protected_instance_methods(false),
+                    klass.private_instance_methods(false))
+          wrap.call(klass.singleton_class, klass.singleton_class.public_instance_methods(false), [])
+        end
+      end
+
+      # Panoramic + a game that defines its own Graphics.width (older
+      # Essentials): menus keep the game's width, map code (camera, tilemap,
+      # map viewports) sees the full display width.
+      def claim_panoramic!
+        %i[width height].each do |m|
+          meth = (Graphics.method(m) rescue nil)
+          loc = meth && meth.source_location
+          next unless loc && !loc[0].to_s.include?("yami_")
+          native = m == :width ? :yami_native_width : :yami_native_height
+          Graphics.define_singleton_method(m) { Yami::Wide.map_ctx? ? send(native) : meth.call }
+          Yami.log("panoramic: wrapped the game's Graphics.#{m} (map code sees the full #{m})")
+        end
+      end
+
       # Older Essentials keeps the size in DEFAULTSCREENWIDTH and may redefine
       # Graphics.width/height in Ruby — possibly after this runtime started.
       # Report the real size to it (full mode). Cheap; runs every frame.
       def claim!
-        return if !on? || panoramic?
+        return unless on?
+        return claim_panoramic! if panoramic?
         rw = Graphics.yami_width
         if Object.const_defined?(:DEFAULTSCREENWIDTH) && DEFAULTSCREENWIDTH != rw
           Yami::OldEss.base # remember the game's own size first
@@ -693,15 +782,31 @@ if Yami::Wide.on?
 
   # Widen the default resolution right away (RMXP games never call resize_screen).
   Graphics.resize_screen(Graphics.yami_width, Graphics.height)
-  Yami.on_tick { Yami::Wide.claim! }
+  Yami.on_tick { Yami::Wide.claim!; Yami::Wide.wrap_map_classes! }
 
   # --- full-screen viewports ----------------------------------------------------
+  module Yami::Wide
+    # Where a viewport the game asks for should really be drawn.
+    def self.adjust(x, y, w, h)
+      bw, bh = base
+      if panoramic? && !map_ctx?
+        [x + margin, y, w, h]
+      elsif x == 0 && w == bw && h == bh
+        [x, y, Graphics.yami_width, h] # map layers and full-screen effects span the display
+      else
+        [x, y, w, h]
+      end
+    end
+  end
+
   class Viewport
     alias_method :yami_vp_init, :initialize
+    alias_method :yami_vp_set_rect, :rect= if method_defined?(:rect=)
     def initialize(*a)
       Yami.run_once unless Yami.once_pending.zero?
       Yami::OldEss.tick
       Yami::Wide.claim!
+      Yami::Wide.wrap_map_classes!
       # Normalise Viewport.new(rect) here. Never re-dispatch to `initialize`:
       # a game subclass may override it and hand a Rect back to super, which
       # would recurse forever (stack overflow seen with Pokémon Essentials).
@@ -710,41 +815,54 @@ if Yami::Wide.on?
         a = [r.x, r.y, r.width, r.height]
       end
       return yami_vp_init(*a) unless a.size == 4
-      bw, bh = Yami::Wide.base
-      rw = Graphics.yami_width
-      x, y, w, h = a
-      if Yami::Wide.panoramic? && !Yami::Wide.map_ctx?
-        x += Yami::Wide.margin
-      elsif x == 0 && w == bw && h == bh
-        w = rw # map layers and full-screen effects span the whole display
-      end
-      yami_vp_init(x, y, w, h)
+      n = Yami::Wide.adjust(*a)
+      @yami_last = n
+      yami_vp_init(*n)
+    end
+
+    # Older Essentials creates every viewport as 100x100 and sets the real
+    # size through rect= (its Sprite_Resizer), so adjust here too. A rect the
+    # game read back from us and hands over again is passed through as is.
+    def rect=(r)
+      return yami_vp_set_rect(r) unless r.respond_to?(:width)
+      v = [r.x, r.y, r.width, r.height]
+      return yami_vp_set_rect(r) if v == @yami_last
+      n = Yami::Wide.adjust(*v)
+      @yami_last = n
+      yami_vp_set_rect(n == v ? r : Rect.new(*n))
     end
   end
 
   # --- panoramic: offset UI drawn without a viewport -----------------------------
-  if Yami::Wide.panoramic?
-    module Yami::UIOffset
-      def initialize(*a)
-        super
-        @yami_ui = !a[0].is_a?(Viewport) && !Yami::Wide.map_ctx? && viewport.nil?
+  # Alias chains, not Module#prepend: older Essentials aliases these same
+  # methods, and alias + prepend recurse forever.
+  if %w[panoramic auto].include?(Yami::Wide.mode)
+    [Sprite, Window].each do |k|
+      next if k.instance_variable_get(:@yami_ui_hooked) || k.ancestors[1..].any? { |a| a.instance_variable_get(:@yami_ui_hooked) }
+      k.instance_variable_set(:@yami_ui_hooked, true)
+      init = k.instance_method(:initialize)
+      getx = k.instance_method(:x)
+      setx = k.instance_method(:x=)
+      setvp = k.instance_method(:viewport=)
+      k.send(:define_method, :initialize) do |*a, &b|
+        init.bind(self).call(*a, &b)
+        @yami_ui = Yami::Wide.panoramic? && !a[0].is_a?(Viewport) && !Yami::Wide.map_ctx? && viewport.nil?
         # VX/Ace style Window.new(x, y, w, h) already placed it; re-apply offset
         self.x = (a[0].is_a?(Integer) ? a[0] : 0) if @yami_ui
       end
-      def x; @yami_ui ? (@yami_lx || 0) : super; end
-      def x=(v)
-        return super unless @yami_ui
+      k.send(:define_method, :x) { @yami_ui ? (@yami_lx || 0) : getx.bind(self).call }
+      k.send(:define_method, :x=) do |v|
+        next setx.bind(self).call(v) unless @yami_ui
         @yami_lx = v
-        super(v + Yami::Wide.margin)
+        setx.bind(self).call(v + Yami::Wide.margin)
       end
-      def viewport=(v)
+      k.send(:define_method, :viewport=) do |v|
         lx = x
-        super
-        @yami_ui = v.nil?
+        setvp.bind(self).call(v)
+        @yami_ui = Yami::Wide.panoramic? && v.nil? && !Yami::Wide.map_ctx?
         self.x = lx
       end
     end
-    [Sprite, Window].each { |k| k.prepend(Yami::UIOffset) unless k.ancestors.include?(Yami::UIOffset) }
   end
 
   # --- after the game's scripts are loaded ------------------------------------
@@ -803,35 +921,7 @@ if Yami::Wide.on?
       end
     end
 
-    # Panoramic: everything map-related runs in "map context" and sees the full width.
-    if Yami::Wide.panoramic?
-      names = %w[Spriteset_Map Game_Map Game_Player Game_Character Game_Event Game_Follower
-                 TilemapRenderer CustomTilemap SynchronizedTilemapAutotiles Spriteset_Global]
-      names.each do |n|
-        next unless Object.const_defined?(n)
-        klass = Object.const_get(n)
-        wrap = lambda do |target, publics, privates|
-          mod = Module.new
-          (publics + privates).uniq.each do |m|
-            next if m == :initialize_copy
-            mod.send(:define_method, m) do |*a, &b|
-              Yami::Wide.ctx += 1
-              begin
-                super(*a, &b)
-              ensure
-                Yami::Wide.ctx -= 1
-              end
-            end
-            mod.send(:ruby2_keywords, m) if mod.respond_to?(:ruby2_keywords, true)
-          end
-          privates.each { |m| mod.send(:private, m) }
-          target.prepend(mod)
-        end
-        wrap.call(klass, klass.public_instance_methods(false) + klass.protected_instance_methods(false),
-                  klass.private_instance_methods(false))
-        wrap.call(klass.singleton_class, klass.singleton_class.public_instance_methods(false), [])
-      end
-    end
+    Yami::Wide.wrap_map_classes!
     Yami.log("widescreen #{Yami::Wide.mode}: #{rw}x#{rh} (base #{Yami::Wide.base.inspect})")
   end
 end

@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 
 @Serializable
 enum class WidescreenMode(val label: String, val blurb: String) {
+    AUTO("Auto", "Fills the screen: Panoramic for Pokémon Essentials games, Widescreen for others"),
     OFF("Original", "Native 4:3 picture, as the developer made it"),
     FULL("Widescreen", "Resizes the game screen; scripts lay out to the new width"),
     PANORAMIC("Panoramic", "Map fills the screen, menus and UI stay at original width, centered"),
@@ -52,7 +53,7 @@ enum class ControllerProfile(val label: String) {
 @Serializable
 data class GameSettings(
     // Display
-    val widescreen: WidescreenMode = WidescreenMode.FULL,
+    val widescreen: WidescreenMode = WidescreenMode.AUTO,
     val aspect: AspectPreset = AspectPreset.DEVICE,
     val fit: ScreenFit = ScreenFit.FIT,
     val scaling: ScalingFilter = ScalingFilter.BILINEAR,
@@ -146,7 +147,7 @@ data class AppSettings(
     val optimizeOnImport: Boolean = true,
     val haptics: Boolean = true,
 ) {
-    companion object { const val SCHEMA = 3 }
+    companion object { const val SCHEMA = 4 }
 }
 
 @Serializable enum class LibraryView { COVERS, GRID, LIST }

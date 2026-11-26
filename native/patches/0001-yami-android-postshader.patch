@@ -178,6 +178,58 @@ index ae7c535..83106b0 100644
      double textureScalingFactor;
      double framebufferScalingFactor;
      double atlasScalingFactor;
+diff --git a/src/display/bitmap.cpp b/src/display/bitmap.cpp
+index 7500a0a..29dbba3 100644
+--- a/src/display/bitmap.cpp
++++ b/src/display/bitmap.cpp
+@@ -3390,8 +3390,8 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
+                                           txtSurf->w - scaledOutlineSize,
+                                           outline->w - doubleOutlineSize
+                                          }) + outlineCropUndo,
+-                           std::min<int>({rect.h - doubleOutlineSize,
+-                                          txtSurf->h - scaledOutlineSize,
++                           /* [yami] no rect.h cap: overflow is centred below */
++                           std::min<int>({txtSurf->h - scaledOutlineSize,
+                                           outline->h - doubleOutlineSize
+                                          }) + outlineCropUndo};
+         SDL_Rect outRect = {doubleOutlineSize - outlineCropUndo, doubleOutlineSize - outlineCropUndo, 0, 0};
+@@ -3401,14 +3401,34 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
+         txtSurf = outline;
+     }
+     
++    /* [yami] A font whose rendered height exceeds the rect (custom pixel fonts
++     * in Pokémon Essentials, sized for Windows GDI) used to be pinned to the
++     * top and cut off at the bottom. Centre the overflow instead, clipped only
++     * by the bitmap, so the glyphs are shown whole. */
++    int srcY = 0;
++    int drawH = std::min(rect.h, txtSurf->h);
++    if (txtSurf->h > rect.h) {
++        alignY = rect.y + (rect.h - txtSurf->h) / 2;
++        drawH = txtSurf->h;
++        if (alignY < 0) {
++            srcY = -alignY;
++            drawH -= srcY;
++            alignY = 0;
++        }
++    }
++    
+     IntRect destRect(alignX, alignY,
+                     std::min(rect.w, (int)(txtSurf->w * squeeze)),
+-                    std::min(rect.h, txtSurf->h));
++                    drawH);
+     
+     destRect.w = std::min(destRect.w, width() - destRect.x);
+     destRect.h = std::min(destRect.h, height() - destRect.y);
++    if (destRect.w <= 0 || destRect.h <= 0) {
++        SDL_FreeSurface(txtSurf);
++        return;
++    }
+     
+-    IntRect sourceRect(scaledOutlineSize, scaledOutlineSize, destRect.w / squeeze, destRect.h);
++    IntRect sourceRect(scaledOutlineSize, scaledOutlineSize + srcY, destRect.w / squeeze, destRect.h);
+     
+     Bitmap txtBitmap(txtSurf, nullptr, true);
+     bool smooth = squeeze != 1.0f;
 diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
 index 2412682..69d0402 100644
 --- a/src/display/gl/shader.cpp

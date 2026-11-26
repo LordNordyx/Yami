@@ -296,24 +296,186 @@ end
 MiniFFI = Win32API unless defined?(MiniFFI)
 
 # -----------------------------------------------------------------------------
-# Opening a folder as a file: Windows says "access denied" (Errno::EACCES),
-# Linux opens it and fails on read with Errno::EISDIR. Older Essentials
-# (FileTests: pbGetFileChar/pbGetFileString) only rescues the Windows errors,
-# so an empty character/graphic name ("Graphics/Characters/") crashed the game.
-# Raise an error that matches both `rescue Errno::EACCES` and
-# `rescue Errno::EISDIR`.
+# Windows environment variables games rely on. Older Essentials' image loader
+# runs Dir.chdir(ENV["TEMP"]) (TypeError: nil into String without it), and
+# screenshots/saves use TEMP, APPDATA, USERPROFILE.
+# -----------------------------------------------------------------------------
+begin
+  yami_home = (Yami.cfg("save_dir") if defined?(Yami) && Yami.respond_to?(:cfg)).to_s
+  yami_home = ENV["YAMI_DATA_DIR"].to_s if yami_home.empty?
+  yami_home = Dir.pwd if yami_home.empty?
+  yami_tmp = File.join(yami_home, "Temp")
+  Dir.mkdir(yami_tmp) unless File.directory?(yami_tmp)
+  %w[TEMP TMP].each { |k| ENV[k] = yami_tmp if ENV[k].to_s.empty? || !File.directory?(ENV[k]) }
+  %w[APPDATA LOCALAPPDATA USERPROFILE HOMEPATH].each { |k| ENV[k] = yami_home if ENV[k].to_s.empty? }
+  ENV["USERNAME"] = "Player" if ENV["USERNAME"].to_s.empty?
+  ENV["COMPUTERNAME"] = "ANDROID" if ENV["COMPUTERNAME"].to_s.empty?
+  ENV["OS"] = "Windows_NT" if ENV["OS"].to_s.empty?
+rescue StandardError => e
+  (STDERR.write("[yami] Windows environment: #{e.message}\n") rescue nil)
+end
+
+# -----------------------------------------------------------------------------
+# Windows file system semantics for game scripts:
+#  * "\\" works as a path separator
+#  * names match regardless of case (Windows-made games are full of
+#    "Hero.png" vs "hero.png"; imported games live on case-sensitive storage)
+#  * opening a folder as a file fails with "access denied" (Errno::EACCES),
+#    which older Essentials (FileTests: pbGetFileChar) rescues — Linux would
+#    fail later with Errno::EISDIR. The error matches both.
 # -----------------------------------------------------------------------------
 module Yami
   class DirAsFileError < Errno::EACCES; end
 
-  module DirAsFile
-    %i[open new read binread readlines foreach].each do |m|
-      define_method(m) do |*a, **k, &b|
-        f = a[0]
-        path = f.is_a?(String) ? f : (f.respond_to?(:to_path) ? f.to_path : nil)
-        if path && !path.empty? && File.directory?(path)
-          raise Yami::DirAsFileError, "Is a directory - #{path}"
+  module WinFS
+    ORIG = {
+      exist: File.method(:exist?), dir: File.method(:directory?),
+      children: Dir.method(:children), pwd: Dir.method(:pwd),
+    }
+    @cache = {}
+    @hits = 0
+
+    module_function
+
+    def path_arg?(f); f.is_a?(String) || (f.respond_to?(:to_path) && !f.is_a?(IO)); end
+
+    def norm(f)
+      return f unless path_arg?(f)
+      s = f.is_a?(String) ? f : f.to_path
+      s.include?("\\") ? s.tr("\\", "/") : s
+    end
+
+    def flush; @cache.clear; end
+
+    def listing(dir)
+      @cache[dir] ||= begin
+        h = {}
+        ORIG[:children].call(dir).each { |n| h[n.downcase] ||= n }
+        h
+      rescue StandardError
+        {}
+      end
+    end
+
+    # The real path for f, matching each part case-insensitively when the
+    # exact name doesn't exist. Unresolvable parts are kept as given.
+    def resolve(f)
+      return f unless path_arg?(f)
+      s = norm(f)
+      return s if s.empty? || ORIG[:exist].call(s)
+      s = s.b unless s.valid_encoding? # Windows-1252 names from old scripts
+      abs = s.start_with?("/")
+      parts = s.split("/")
+      cur = abs ? "/" : "."
+      out = []
+      parts.each_with_index do |part, i|
+        next if part.empty? && i.zero?
+        if part.empty? || part == "." || part == ".."
+          out << part
+          cur = File.join(cur, part)
+          next
         end
+        real = ORIG[:exist].call(File.join(cur, part)) ? part : listing(cur)[part.downcase]
+        unless real
+          out.concat(parts[i..-1])
+          break
+        end
+        out << real
+        cur = File.join(cur, real)
+      end
+      r = out.join("/")
+      r = "/" + r if abs
+      r += "/" if s.end_with?("/") && !r.end_with?("/")
+      r
+    end
+
+    def dir_as_file!(path)
+      raise Yami::DirAsFileError, "Is a directory - #{path}" if path.is_a?(String) && !path.empty? && ORIG[:dir].call(path)
+    end
+
+    def writes?(mode)
+      m = mode.is_a?(String) ? mode : (mode.is_a?(Integer) ? (mode & (File::WRONLY | File::RDWR | File::CREAT)).nonzero? && "w" : nil)
+      m.is_a?(String) && m =~ /[wa+]/
+    end
+  end
+
+  # File.open / File.read & co.
+  module WinFile
+    READS = %i[read binread readlines foreach]
+    QUERIES = %i[exist? file? directory? readable? writable? size size? zero? empty? mtime atime ctime
+                 stat lstat ftype symlink? executable?]
+    WRITES = %i[delete unlink write binwrite truncate chmod utime]
+    PURE = %i[basename dirname extname split]
+
+    %i[open new].each do |m|
+      define_method(m) do |*a, **k, &b|
+        if Yami::WinFS.path_arg?(a[0])
+          a[0] = Yami::WinFS.resolve(a[0])
+          if Yami::WinFS.writes?(a[1] || k[:mode])
+            Yami::WinFS.flush
+          else
+            Yami::WinFS.dir_as_file!(a[0])
+          end
+        end
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+    READS.each do |m|
+      define_method(m) do |*a, **k, &b|
+        if Yami::WinFS.path_arg?(a[0])
+          a[0] = Yami::WinFS.resolve(a[0])
+          Yami::WinFS.dir_as_file!(a[0])
+        end
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+    QUERIES.each do |m|
+      next unless File.respond_to?(m)
+      define_method(m) do |*a, **k, &b|
+        a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+    WRITES.each do |m|
+      define_method(m) do |*a, **k, &b|
+        a.map! { |f| Yami::WinFS.path_arg?(f) ? Yami::WinFS.resolve(f) : f }
+        Yami::WinFS.flush
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+    define_method(:rename) do |from, to|
+      Yami::WinFS.flush
+      super(Yami::WinFS.resolve(from), Yami::WinFS.resolve(to)).tap { Yami::WinFS.flush }
+    end
+    PURE.each do |m|
+      define_method(m) { |f, *a| super(Yami::WinFS.norm(f), *a) }
+    end
+  end
+
+  module WinFileTest
+    %i[exist? file? directory? size size? zero? readable?].each do |m|
+      define_method(m) { |f, *a| super(Yami::WinFS.resolve(f), *a) }
+    end
+  end
+
+  module WinDir
+    %i[chdir exist? entries children foreach each_child empty?].each do |m|
+      next unless Dir.respond_to?(m)
+      define_method(m) do |*a, **k, &b|
+        a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
+        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+      end
+    end
+    %i[mkdir rmdir delete unlink].each do |m|
+      define_method(m) do |*a, &b|
+        a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
+        Yami::WinFS.flush
+        super(*a, &b).tap { Yami::WinFS.flush }
+      end
+    end
+    %i[glob []].each do |m|
+      define_method(m) do |*a, **k, &b|
+        a[0] = a[0].is_a?(Array) ? a[0].map { |x| Yami::WinFS.norm(x) } : Yami::WinFS.norm(a[0])
         k.empty? ? super(*a, &b) : super(*a, **k, &b)
       end
     end
@@ -322,5 +484,7 @@ end
 class << Errno::EISDIR
   def ===(e); e.is_a?(Yami::DirAsFileError) || super; end
 end
-File.singleton_class.prepend(Yami::DirAsFile)
+File.singleton_class.prepend(Yami::WinFile)
+FileTest.singleton_class.prepend(Yami::WinFileTest)
+Dir.singleton_class.prepend(Yami::WinDir)
 (STDERR.write("[yami] Win32API compatibility layer active\n") rescue nil)

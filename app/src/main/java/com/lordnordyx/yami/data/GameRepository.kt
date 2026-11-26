@@ -63,6 +63,13 @@ class GameRepository(private val context: Context, private val owner: Boolean = 
             _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v3())
             _games.value = _games.value.map { it.copy(settings = it.settings.v3()) }
         }
+        if (from < 4) {
+            // v4: "Auto" widescreen (panoramic for Pokémon Essentials, whose menus are
+            // drawn for 4:3) replaces the v3 default of FULL.
+            fun GameSettings.v4() = copy(widescreen = if (widescreen == WidescreenMode.FULL) WidescreenMode.AUTO else widescreen)
+            _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v4())
+            _games.value = _games.value.map { it.copy(settings = it.settings.v4()) }
+        }
         _settings.value = _settings.value.copy(schema = AppSettings.SCHEMA)
         persist()
     }

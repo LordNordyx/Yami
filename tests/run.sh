@@ -22,10 +22,15 @@ PY
 
 echo "== Ruby runtime & optimizer"
 RPG1="$TMP/rpg1.rb" WORK="$TMP/rt" ruby "$HERE/ruby/test.rb" | grep -v '^\[yami\]'
-for args in "full xp" "full ess" "full oldess" "panoramic ess" "full resizer" "off resizer" "panoramic resizer" "full midload" "panoramic midload" "off midload" "full custom" "off custom" "panoramic custom"; do
+for args in "full xp" "full ess" "full oldess" "panoramic ess" "full resizer" "off resizer" "panoramic resizer" "full midload" "panoramic midload" "off midload" "full custom" "off custom" "panoramic custom" "auto xp"; do
   echo "== widescreen $args"
   mkdir -p "$TMP/w"; WORK="$TMP/w" ruby "$HERE/ruby/wide.rb" $args | grep -v '^\[yami\]'
 done
+
+for m in full panoramic off auto; do for st in window border fullscreen; do
+  echo "== real Essentials v17 scripts: widescreen $m, $st"
+  ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/essentials.rb" $m $st | grep -v '^\[yami' )
+done; done
 
 echo "== Ruby 1.8 compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/ruby18.rb" | grep -v '^\[yami' )

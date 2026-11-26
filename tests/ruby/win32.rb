@@ -117,6 +117,29 @@ check "...also catchable as Errno::EISDIR", (begin; File.read("Graphics/Characte
 check "normal file reads untouched", pbGetFileChar("Graphics/Characters/hero.png") == "\x89" .b &&
   File.binread("Graphics/Characters/hero.png") == "\x89PNG".b && File.open("Graphics/Characters/hero.png", "rb", &:read).bytesize == 4
 check "File.open with keywords still works", File.open("Graphics/Characters/hero.png", mode: "rb") { |f| f.read(1) } == "\x89".b
+# --- Windows file system semantics ---
+Dir.mkdir("Graphics/Pictures") rescue nil
+File.binwrite("Graphics/Pictures/Title.PNG", "T")
+check "case-insensitive exist?", File.exist?("graphics/pictures/title.png") && FileTest.exist?("GRAPHICS/Pictures/title.png")
+check "case-insensitive open (safeExists? pattern)", (r = false; File.open("Graphics/pictures/title.png", "rb") { r = true } rescue nil; r)
+check "backslash paths", File.read("Graphics\\Pictures\\Title.PNG") == "T" && File.file?(".\\graphics\\pictures\\TITLE.png")
+check "missing file still missing", !File.exist?("Graphics/Pictures/nope.png") && !File.exist?("Nope/Pictures/x.png")
+check "missing file raises ENOENT as usual", (begin; File.read("Graphics/Pictures/nope.png"); false; rescue Errno::ENOENT; true; end)
+Dir.mkdir("Saves\\Slot1") rescue Dir.mkdir("Saves") && Dir.mkdir("Saves\\Slot1")
+File.open("Saves\\Slot1\\Game.rxdata", "wb") { |f| f.write("S") }
+check "write with backslashes lands in the real folder", File.binread("Saves/Slot1/Game.rxdata") == "S"
+check "new file visible right after writing (cache refresh)", File.exist?("saves/slot1/game.rxdata")
+File.open("saves/slot1/GAME.rxdata", "wb") { |f| f.write("S2") }
+check "writing in another case overwrites the existing file, like Windows", Dir.children("Saves/Slot1") == ["Game.rxdata"] && File.binread("Saves/Slot1/Game.rxdata") == "S2"
+File.rename("saves/slot1/game.rxdata", "Saves/Slot1/Backup.rxdata")
+check "rename resolves case", File.exist?("Saves/Slot1/Backup.rxdata") && !File.exist?("Saves/Slot1/Game.rxdata")
+File.delete("SAVES/SLOT1/backup.rxdata")
+check "delete resolves case", Dir.children("Saves/Slot1").empty?
+check "File.basename/extname understand backslashes", File.basename("Graphics\\Pictures\\Title.png", ".png") == "Title" && File.extname("a\\b.png") == ".png"
+check "Dir.chdir resolves case", Dir.chdir("graphics/PICTURES") { File.exist?("Title.PNG") }
+check "Dir.entries resolves case", Dir.entries("GRAPHICS/pictures").include?("Title.PNG")
+check "non-UTF-8 name doesn't crash", (File.exist?("Graphics/Pok\xE9mon.png".b) rescue :err) == false
+check "File.open with block returns block value", File.open("Graphics/Pictures/title.png", "rb") { |f| f.read } == "T"
 check "MiniFFI alias", MiniFFI == Win32API
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")

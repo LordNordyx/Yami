@@ -23,7 +23,7 @@ class Bitmap
   def to_file(path); File.write(path, Marshal.dump([@width, @height, @blts])); end
   def clear; end; def fill_rect(*); end; def draw_text(*); end; def dispose; end
 end
-class Viewport; attr_reader :rect; def initialize(*a); @rect = a; end; end
+class Viewport; attr_reader :rect; def initialize(*a); @rect = a; end; def rect=(r); @rect = [r.x, r.y, r.width, r.height]; end; end
 class Sprite
   attr_accessor :bitmap, :z, :viewport; attr_writer :x
   def initialize(vp = nil); @viewport = vp; @x = 0; end
