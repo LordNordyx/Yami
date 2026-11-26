@@ -69,7 +69,9 @@ jobs:
         if: failure()
         run: |
           for f in $(find native/.work/build-arm64 -name config.log -o -name 'meson-log.txt' | head -20); do
-            echo "::group::$f"; tail -n 120 "$f"; echo "::endgroup::"
+            echo "::group::$f"
+            grep -n -B2 -A40 -E "is valid|error:|Error " "$f" | tail -n 200 || tail -n 120 "$f"
+            echo "::endgroup::"
           done
 
       - uses: actions/upload-artifact@v4
