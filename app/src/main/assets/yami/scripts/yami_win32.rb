@@ -331,6 +331,11 @@ begin
   ENV["USERNAME"] = "Player" if ENV["USERNAME"].to_s.empty?
   ENV["COMPUTERNAME"] = "ANDROID" if ENV["COMPUTERNAME"].to_s.empty?
   ENV["OS"] = "Windows_NT" if ENV["OS"].to_s.empty?
+  # Essentials' FontInstaller looks for its fonts in %SystemRoot%\Fonts and
+  # warns on every start when they are missing ("the look of the game's text
+  # will not be optimal"), then tries to install them. The engine already
+  # loads the game's Fonts folder, so point the Windows folder at the game.
+  %w[SystemRoot windir WINDIR].each { |k| ENV[k] = Dir.pwd if ENV[k].to_s.empty? }
 rescue StandardError => e
   (STDERR.write("[yami] Windows environment: #{e.message}\n") rescue nil)
 end

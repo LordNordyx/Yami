@@ -55,6 +55,7 @@ end
 
 class Viewport
   attr_accessor :z, :visible, :color, :tone
+  attr_accessor :yami_unclipped
   def initialize(*a)
     r = a.size == 1 ? a[0] : Rect.new(*a)
     @nrect = Rect.new(r.x, r.y, r.width, r.height)
@@ -72,6 +73,7 @@ end
 
 class Sprite
   attr_accessor :bitmap, :z, :visible, :opacity, :viewport, :src_rect, :angle, :mirror, :color, :tone, :blend_type
+  attr_accessor :yami_unclipped
   def initialize(vp = nil)
     @viewport = vp; @nx = @ny = @nox = @noy = 0; @nzx = @nzy = 1.0; @visible = true; @z = 0
     @src_rect = Rect.new
@@ -125,6 +127,12 @@ module Graphics
     def freeze; end; def transition(*); end; def frame_reset; end
     def snap_to_bitmap; :native_snap; end
     def brightness; 255; end; def brightness=(v); end
+    # [yami] engine 16:9 compositor
+    attr_reader :ui_clip, :ambient
+    def yami_ui_clip(x, y, w, h); @ui_clip = [x, y, w, h]; end
+    def yami_ui_clip_off; @ui_clip = nil; end
+    def yami_ambient(x, w, dim); @ambient = [x, w, dim]; end
+    def yami_ambient_off; @ambient = nil; end
   end
   self.frame_rate = 40
 end

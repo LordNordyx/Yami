@@ -51,6 +51,70 @@ index b6344f9..fe5f62e 100644
              if (state)
                  break;
          }
+diff --git a/binding/graphics-binding.cpp b/binding/graphics-binding.cpp
+index 894163b..f7142ba 100644
+--- a/binding/graphics-binding.cpp
++++ b/binding/graphics-binding.cpp
+@@ -289,6 +289,48 @@ RB_METHOD(graphicsResizeScreen)
+     return Qnil;
+ }
+ 
++/* [yami] Graphics.yami_ui_clip(x, y, w, h) / Graphics.yami_ui_clip_off */
++RB_METHOD(graphicsYamiUiClip)
++{
++    RB_UNUSED_PARAM;
++    int x, y, w, h;
++    rb_get_args(argc, argv, "iiii", &x, &y, &w, &h RB_ARG_END);
++    GFX_LOCK;
++    shState->graphics().setYamiUiClip(true, x, y, w, h);
++    GFX_UNLOCK;
++    return Qnil;
++}
++
++RB_METHOD(graphicsYamiUiClipOff)
++{
++    RB_UNUSED_PARAM;
++    GFX_LOCK;
++    shState->graphics().setYamiUiClip(false, 0, 0, 0, 0);
++    GFX_UNLOCK;
++    return Qnil;
++}
++
++/* [yami] Graphics.yami_ambient(box_x, box_w, dim_percent) / Graphics.yami_ambient_off */
++RB_METHOD(graphicsYamiAmbient)
++{
++    RB_UNUSED_PARAM;
++    int x, w, dim;
++    rb_get_args(argc, argv, "iii", &x, &w, &dim RB_ARG_END);
++    GFX_LOCK;
++    shState->graphics().setYamiAmbient(true, x, w, dim / 100.0f);
++    GFX_UNLOCK;
++    return Qnil;
++}
++
++RB_METHOD(graphicsYamiAmbientOff)
++{
++    RB_UNUSED_PARAM;
++    GFX_LOCK;
++    shState->graphics().setYamiAmbient(false, 0, 0, 0);
++    GFX_UNLOCK;
++    return Qnil;
++}
++
+ RB_METHOD(graphicsResizeWindow)
+ {
+     RB_UNUSED_PARAM;
+@@ -439,6 +481,10 @@ void graphicsBindingInit()
+     _rb_define_module_function(module, "fadein", graphicsFadein);
+     _rb_define_module_function(module, "snap_to_bitmap", graphicsSnapToBitmap);
+     _rb_define_module_function(module, "resize_screen", graphicsResizeScreen);
++    _rb_define_module_function(module, "yami_ui_clip", graphicsYamiUiClip);
++    _rb_define_module_function(module, "yami_ui_clip_off", graphicsYamiUiClipOff);
++    _rb_define_module_function(module, "yami_ambient", graphicsYamiAmbient);
++    _rb_define_module_function(module, "yami_ambient_off", graphicsYamiAmbientOff);
+     _rb_define_module_function(module, "resize_window", graphicsResizeWindow);
+     _rb_define_module_function(module, "center", graphicsCenter);
+         
 diff --git a/binding/input-binding.cpp b/binding/input-binding.cpp
 index 3e20428..43676b7 100644
 --- a/binding/input-binding.cpp
@@ -78,6 +142,67 @@ index 3e20428..43676b7 100644
      
      VALUE submod = rb_define_module_under(module, "Controller");
      _rb_define_module_function(submod, "connected?", inputControllerConnected);
+diff --git a/binding/sprite-binding.cpp b/binding/sprite-binding.cpp
+index 096464e..b5650e0 100644
+--- a/binding/sprite-binding.cpp
++++ b/binding/sprite-binding.cpp
+@@ -108,6 +108,19 @@ RB_METHOD_GUARD(spriteHeight) {
+ }
+ RB_METHOD_GUARD_END
+ 
++/* [yami] Sprite#yami_unclipped = true: exempt from the 16:9 UI box clip
++ * (map overlays drawn without a viewport, e.g. dark-cave darkness) */
++RB_METHOD(spriteSetYamiUnclipped)
++{
++    RB_UNUSED_PARAM;
++    bool v;
++    rb_get_args(argc, argv, "b", &v RB_ARG_END);
++    Sprite *s = getPrivateData<Sprite>(self);
++    if (s)
++        s->yamiUnclipped = v;
++    return rb_bool_new(v);
++}
++
+ void spriteBindingInit() {
+     VALUE klass = rb_define_class("Sprite", rb_cObject);
+ #if RAPI_FULL > 187
+@@ -121,6 +134,7 @@ void spriteBindingInit() {
+     viewportElementBindingInit<Sprite>(klass);
+     
+     _rb_define_method(klass, "initialize", spriteInitialize);
++    _rb_define_method(klass, "yami_unclipped=", spriteSetYamiUnclipped);
+     
+     INIT_PROP_BIND(Sprite, Bitmap, "bitmap");
+     INIT_PROP_BIND(Sprite, SrcRect, "src_rect");
+diff --git a/binding/viewport-binding.cpp b/binding/viewport-binding.cpp
+index f1c754b..0c851b9 100644
+--- a/binding/viewport-binding.cpp
++++ b/binding/viewport-binding.cpp
+@@ -79,6 +79,18 @@ DEF_GFX_PROP_OBJ_VAL(Viewport, Tone, Tone, "tone")
+ DEF_GFX_PROP_I(Viewport, OX)
+ DEF_GFX_PROP_I(Viewport, OY)
+ 
++/* [yami] Viewport#yami_unclipped = true: exempt from the 16:9 UI box clip */
++RB_METHOD(viewportSetYamiUnclipped)
++{
++    RB_UNUSED_PARAM;
++    bool v;
++    rb_get_args(argc, argv, "b", &v RB_ARG_END);
++    Viewport *vp = getPrivateData<Viewport>(self);
++    if (vp)
++        vp->yamiUnclipped = v;
++    return rb_bool_new(v);
++}
++
+ void viewportBindingInit() {
+     VALUE klass = rb_define_class("Viewport", rb_cObject);
+ #if RAPI_FULL > 187
+@@ -98,4 +110,5 @@ void viewportBindingInit() {
+     INIT_PROP_BIND(Viewport, OY, "oy");
+     INIT_PROP_BIND(Viewport, Color, "color");
+     INIT_PROP_BIND(Viewport, Tone, "tone");
++    _rb_define_method(klass, "yami_unclipped=", viewportSetYamiUnclipped);
+ }
 diff --git a/meson.build b/meson.build
 index 2b3dc51..c36a03d 100644
 --- a/meson.build
@@ -230,6 +355,65 @@ index 7500a0a..29dbba3 100644
      
      Bitmap txtBitmap(txtSurf, nullptr, true);
      bool smooth = squeeze != 1.0f;
+diff --git a/src/display/gl/scene.cpp b/src/display/gl/scene.cpp
+index 21760aa..b7b6986 100644
+--- a/src/display/gl/scene.cpp
++++ b/src/display/gl/scene.cpp
+@@ -20,6 +20,7 @@
+ */
+ 
+ #include "scene.h"
++#include "glstate.h"
+ #include "sharedstate.h"
+ 
+ Scene::Scene()
+@@ -96,8 +97,19 @@ void Scene::composite()
+ 	{
+ 		SceneElement *e = iter->data;
+ 
+-		if (e->visible)
++		if (!e->visible)
++			continue;
++
++		/* [yami] UI layer clip, see yamiClip */
++		if (yamiClip && !e->yamiUnclipped) {
++			glState.scissorTest.pushSet(true);
++			glState.scissorBox.pushSet(*yamiClip);
++			e->draw();
++			glState.scissorBox.pop();
++			glState.scissorTest.pop();
++		} else {
+ 			e->draw();
++		}
+ 	}
+ }
+ 
+diff --git a/src/display/gl/scene.h b/src/display/gl/scene.h
+index 0353e6a..e9d19a5 100644
+--- a/src/display/gl/scene.h
++++ b/src/display/gl/scene.h
+@@ -61,6 +61,11 @@ public:
+ 
+ 	const Geometry &getGeometry() const { return geometry; }
+ 
++	/* [yami] When set (top-level screen only), every element that is not
++	 * marked yamiUnclipped is clipped to this rect: the centred UI box of
++	 * Yami's 16:9 adaptation, so UI never spills into the side areas. */
++	const IntRect *yamiClip = nullptr;
++
+ protected:
+ 	void insert(SceneElement &element);
+ 	void insertAfter(SceneElement &element, SceneElement &after);
+@@ -91,6 +96,9 @@ public:
+ 
+ 	virtual void aboutToAccess() const = 0;
+ 
++	/* [yami] exempt from Scene::yamiClip (map layers, full-screen effects) */
++	bool yamiUnclipped = false;
++
+ protected:
+ 	/* A bit about OpenGL state:
+ 	 *
 diff --git a/src/display/gl/shader.cpp b/src/display/gl/shader.cpp
 index 2412682..69d0402 100644
 --- a/src/display/gl/shader.cpp
@@ -299,10 +483,151 @@ index 1f9c956..e44959e 100644
  {
  public:
 diff --git a/src/display/graphics.cpp b/src/display/graphics.cpp
-index 3345468..4b9221f 100644
+index 3345468..3be4a18 100644
 --- a/src/display/graphics.cpp
 +++ b/src/display/graphics.cpp
-@@ -900,6 +900,9 @@ struct GraphicsPrivate {
+@@ -542,7 +542,12 @@ public:
+         
+         FBO::clear();
+         
++        yamiClip = yamiClipOn ? &yamiClipRect : nullptr;
+         Scene::composite();
++        yamiClip = nullptr;
++        
++        if (yamiAmbientOn)
++            drawAmbient(w, h);
+         
+         if (brightEffect) {
+             SimpleColorShader &shader = shState->shaders().simpleColor;
+@@ -554,6 +559,127 @@ public:
+         }
+     }
+     
++    /* [yami] 16:9 adaptation ------------------------------------------------ */
++    void setYamiClip(bool on, const IntRect &r) {
++        yamiClipOn = on && r.w > 0 && r.h > 0;
++        yamiClipRect = r;
++    }
++    
++    void setYamiAmbient(bool on, int x, int w, float dim) {
++        yamiAmbientOn = on && w > 0;
++        ambX = x;
++        ambW = w;
++        ambDim = dim < 0 ? 0 : (dim > 1 ? 1 : dim);
++    }
++    
++private:
++    bool yamiClipOn = false;
++    IntRect yamiClipRect;
++    bool yamiAmbientOn = false;
++    int ambX = 0, ambW = 0;
++    float ambDim = 0.5f;
++    TEXFBO amb[2];
++    Vec2i ambSize[2] = {Vec2i(0, 0), Vec2i(0, 0)};
++    Quad ambDimQuad;
++    
++    void ensureAmbBuffer(int i, int w, int h) {
++        if (ambSize[i].x == w && ambSize[i].y == h)
++            return;
++        if (ambSize[i].x != 0)
++            TEXFBO::fini(amb[i]);
++        TEXFBO::init(amb[i]);
++        TEXFBO::allocEmpty(amb[i], w, h);
++        TEXFBO::linkFBO(amb[i]);
++        ambSize[i] = Vec2i(w, h);
++    }
++    
++    /* Side areas next to the centred UI box: a soft, dimmed enlargement of the
++     * box's own picture (cover-scaled, so proportions are kept), instead of
++     * black bars. The box is downsampled twice with linear filtering (a cheap
++     * blur), then drawn enlarged, clipped to the sides, and darkened. */
++    void drawAmbient(int w, int h) {
++        const int ax = ambX, aw = ambW;
++        if (aw <= 0 || aw >= w || ax < 0 || ax + aw > w || h <= 0)
++            return;
++        
++        const int w1 = std::max(aw / 4, 1), h1 = std::max(h / 4, 1);
++        const int w2 = std::max(aw / 16, 1), h2 = std::max(h / 16, 1);
++        ensureAmbBuffer(0, w1, h1);
++        ensureAmbBuffer(1, w2, h2);
++        
++        TEXFBO &cur = pp.frontBuffer();
++        SimpleShader &sh = shState->shaders().simple;
++        Quad &quad = shState->gpQuad();
++        
++        glState.scissorTest.pushSet(false);
++        glState.blend.pushSet(false);
++        
++        /* box -> 1/4 */
++        FBO::bind(amb[0].fbo);
++        glState.viewport.pushSet(IntRect(0, 0, w1, h1));
++        sh.bind();
++        sh.applyViewportProj();
++        sh.setTranslation(Vec2i());
++        sh.setTexSize(Vec2i(w, h));
++        TEX::bind(cur.tex);
++        TEX::setSmooth(true);
++        quad.setTexPosRect(IntRect(ax, 0, aw, h), IntRect(0, 0, w1, h1));
++        quad.draw();
++        TEX::setSmooth(false);
++        glState.viewport.pop();
++        
++        /* 1/4 -> 1/16 */
++        FBO::bind(amb[1].fbo);
++        glState.viewport.pushSet(IntRect(0, 0, w2, h2));
++        sh.applyViewportProj();
++        sh.setTexSize(Vec2i(w1, h1));
++        TEX::bind(amb[0].tex);
++        TEX::setSmooth(true);
++        quad.setTexPosRect(IntRect(0, 0, w1, h1), IntRect(0, 0, w2, h2));
++        quad.draw();
++        glState.viewport.pop();
++        
++        /* back to the screen: enlarged, cover-scaled, sides only */
++        pp.startRender();
++        sh.applyViewportProj();
++        sh.setTexSize(Vec2i(w2, h2));
++        TEX::bind(amb[1].tex);
++        TEX::setSmooth(true);
++        const int coverH = (int)((long long)h * w / aw);
++        quad.setTexPosRect(IntRect(0, 0, w2, h2), IntRect(0, (h - coverH) / 2, w, coverH));
++        
++        const IntRect sides[2] = { IntRect(0, 0, ax, h), IntRect(ax + aw, 0, w - ax - aw, h) };
++        glState.scissorTest.set(true);
++        for (const IntRect &r : sides) {
++            if (r.w <= 0)
++                continue;
++            glState.scissorBox.pushSet(r);
++            quad.draw();
++            glState.scissorBox.pop();
++        }
++        glState.blend.pop();
++        
++        /* darken */
++        if (ambDim > 0) {
++            SimpleColorShader &cs = shState->shaders().simpleColor;
++            cs.bind();
++            cs.applyViewportProj();
++            cs.setTranslation(Vec2i());
++            ambDimQuad.setTexPosRect(IntRect(0, 0, w, h), IntRect(0, 0, w, h));
++            ambDimQuad.setColor(Vec4(0, 0, 0, ambDim));
++            for (const IntRect &r : sides) {
++                if (r.w <= 0)
++                    continue;
++                glState.scissorBox.pushSet(r);
++                ambDimQuad.draw();
++                glState.scissorBox.pop();
++            }
++        }
++        glState.scissorTest.pop();
++    }
++    
++public:
++    
+     void requestViewportRender(const Vec4 &c, const Vec4 &f, const Vec4 &t) {
+         const IntRect &viewpRect = glState.scissorBox.get();
+         const IntRect &screenRect = geometry.rect;
+@@ -900,6 +1026,9 @@ struct GraphicsPrivate {
      }
      
      ~GraphicsPrivate() {
@@ -312,7 +637,7 @@ index 3345468..4b9221f 100644
          TEXFBO::fini(frozenScene);
          TEXFBO::fini(integerScaleBuffer);
          SDL_DestroyMutex(avgFPSLock);
-@@ -1030,9 +1033,86 @@ struct GraphicsPrivate {
+@@ -1030,9 +1159,86 @@ struct GraphicsPrivate {
      }
      
  private:
@@ -399,7 +724,22 @@ index 3345468..4b9221f 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
-@@ -1530,7 +1610,22 @@ void Graphics::resizeScreen(int width, int height) {
+@@ -1498,6 +1704,14 @@ int Graphics::displayHeight() const {
+     return dm.h / p->backingScaleFactor;
+ }
+ 
++void Graphics::setYamiUiClip(bool on, int x, int y, int w, int h) {
++    p->screen.setYamiClip(on, IntRect(x, y, w, h));
++}
++
++void Graphics::setYamiAmbient(bool on, int x, int w, float dim) {
++    p->screen.setYamiAmbient(on, x, w, dim);
++}
++
+ void Graphics::resizeScreen(int width, int height) {
+     p->threadData->rqWindowAdjust.wait();
+     p->checkResize(true);
+@@ -1530,7 +1744,22 @@ void Graphics::resizeScreen(int width, int height) {
      
      glState.scissorBox.set(IntRect(0, 0, p->scRes.x, p->scRes.y));
      
@@ -422,7 +762,7 @@ index 3345468..4b9221f 100644
  }
  
  void Graphics::resizeWindow(int width, int height, bool center) {
-@@ -1541,6 +1636,10 @@ void Graphics::resizeWindow(int width, int height, bool center) {
+@@ -1541,6 +1770,10 @@ void Graphics::resizeWindow(int width, int height, bool center) {
          height == p->winSize.y / p->backingScaleFactor)
              return;
  
@@ -433,6 +773,36 @@ index 3345468..4b9221f 100644
      shState->eThread().requestWindowResize(width, height);
      
      if (center)
+diff --git a/src/display/graphics.h b/src/display/graphics.h
+index ac5ab55..85fb498 100644
+--- a/src/display/graphics.h
++++ b/src/display/graphics.h
+@@ -66,6 +66,9 @@ public:
+     int displayWidth() const;
+     int displayHeight() const;
+ 	void resizeScreen(int width, int height);
++	/* [yami] 16:9 adaptation: UI box clip and ambient side fill */
++	void setYamiUiClip(bool on, int x, int y, int w, int h);
++	void setYamiAmbient(bool on, int x, int w, float dim);
+     void resizeWindow(int width, int height, bool center=false);
+ 	void drawMovieFrame(const THEORAPLAY_VideoFrame* video, Bitmap *videoBitmap);
+ 	bool updateMovieInput(Movie *movie);
+diff --git a/src/display/viewport.cpp b/src/display/viewport.cpp
+index 29b3219..7a224b7 100644
+--- a/src/display/viewport.cpp
++++ b/src/display/viewport.cpp
+@@ -195,7 +195,10 @@ void Viewport::composite()
+ 
+ 	/* Setup scissor */
+ 	glState.scissorTest.pushSet(true);
+-	glState.scissorBox.pushSet(p->rect->toIntRect());
++	/* [yami] intersect with the enclosing clip (Yami's UI box) instead of
++	 * replacing it; the root box is the whole screen otherwise. */
++	glState.scissorBox.push();
++	glState.scissorBox.setIntersect(p->rect->toIntRect());
+ 
+ 	Scene::composite();
+ 
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
 index 67c9be0..fb10591 100644
 --- a/src/filesystem/filesystem.cpp

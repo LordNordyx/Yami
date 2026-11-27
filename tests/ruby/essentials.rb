@@ -165,9 +165,10 @@ bvp, dbx, bw = Game_Player.new.update_with_encounter
 check "battle started from the map sees #{gw} px", bw == gw && dbx == gw - 244
 check "battle viewport at #{want.inspect}", bvp.native_rect == want
 # An event's message runs inside the map update: still UI.
+# (panoramic: the textbox is laid out across the whole display, over the map)
 msg, mw = Game_Event.new.run_message_event
-check "event message sees #{gw} px", mw == gw
-check "event message window placed at x=#{mode == 'panoramic' ? 106 : 0}", msg.native_pos[0] == (mode == "panoramic" ? 106 : 0)
+check "event message on the map sees #{nw} px", mw == nw
+check "event message window at native x=0", msg.native_pos[0] == 0
 
 # Fade to black on a full-screen UI viewport covers the whole display.
 eval(<<~RB, TOPLEVEL_BINDING, "100:PSystem_Utilities")
@@ -187,6 +188,69 @@ if mode == "panoramic"
   check "curtains go away with their viewport", sides.all?(&:disposed?)
 else
   check "no curtains needed outside panoramic", !cur || cur[1].nil?
+end
+
+# --- adaptive layers: engine clip + ambient side fill ---
+Graphics.update
+if mode == "panoramic"
+  check "engine clips UI to the centred box", Graphics.ui_clip == [106, 0, 640, 480]
+  check "map viewport exempt from the clip", sm.vp.yami_unclipped == true
+  check "UI viewport clipped", !vp.yami_unclipped
+  check "dark-cave sprite (no viewport) exempt", dark.yami_unclipped == true
+  check "fade viewport exempt", fade.yami_unclipped == true
+  check "map shown: no ambient fill", Graphics.ambient.nil?
+  # Wide dialogue: the message system's textbox spans the display over the map.
+  eval(<<~RB, TOPLEVEL_BINDING, "050:SpriteWindow")
+    class TestWindow
+      attr_reader :sprites, :width
+      attr_accessor :x, :y, :height
+      def initialize; @sprites = [Sprite.new, Sprite.new]; @x = 0; @width = 0; end
+      def width=(v); @width = v; end
+      def x=(v); @x = v; @sprites.each { |s| s.x = v }; end
+    end
+    def pbBottomLeftLines(w, lines); w.x = 0; w.width = Graphics.width; w.height = 32 * lines + 32; w.y = Graphics.height - w.height; end
+  RB
+  eval(<<~RB, TOPLEVEL_BINDING, "052:Messages")
+    def pbCreateMessageWindow; w = TestWindow.new; pbBottomLeftLines(w, 2); w; end
+  RB
+  Graphics.update
+  mw = pbCreateMessageWindow
+  dvp = mw.sprites[0].viewport
+  check "map textbox spans the display (#{mw.width} px)", mw.width == 852 && mw.x == 0
+  check "...in the wide dialogue layer, exempt from the clip", dvp && dvp.native_rect == [0, 0, 852, 480] && dvp.yami_unclipped
+  check "...its parts at native x=0 (not shifted)", mw.sprites.all? { |sp| sp.native_pos[0] == 0 }
+  check "map code still unaffected", Game_Player.new.camera_width == 852
+  # a full-screen scene over the map (bag/party: opaque 640x480 background)
+  eval(<<~RB, TOPLEVEL_BINDING, "135:PScreen_Bag")
+    def pbOpenTestBag
+      v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999
+      bg = Sprite.new(v); bg.bitmap = Bitmap.new(640, 480)
+      [v, bg]
+    end
+    def pbOpenTestOverlay
+      v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999
+      icon = Sprite.new(v); icon.bitmap = Bitmap.new(64, 64)
+      v
+    end
+  RB
+  bagvp, bagbg = pbOpenTestBag
+  Graphics.update
+  check "full-screen scene over the map: ambient side fill on", Graphics.ambient == [106, 640, 45]
+  bw2 = pbCreateMessageWindow
+  check "textbox inside a full-screen scene stays in its layout (640 px, centred)",
+        bw2.width == 640 && bw2.sprites[0].viewport.nil? && bw2.sprites[0].native_pos[0] == 106
+  bagbg.opacity = 0; Graphics.update
+  check "...off while its background is transparent", Graphics.ambient.nil?
+  bagbg.opacity = 255; Graphics.update
+  bagvp.dispose; bagbg.dispose; Graphics.update
+  check "...and off again when it closes (map visible)", Graphics.ambient.nil?
+  ov = pbOpenTestOverlay; Graphics.update
+  check "overlay menu (no full background): sides keep showing the map", Graphics.ambient.nil?
+  ov.dispose
+  sm.vp.dispose; sm.pictures.dispose; Graphics.update # the map scene closes
+  check "no map on screen (title, load): ambient on", Graphics.ambient == [106, 640, 45]
+else
+  check "no clip / ambient outside panoramic", Graphics.ui_clip.nil? && Graphics.ambient.nil?
 end
 
 # --- image loader's Windows temp folder ---
@@ -213,7 +277,19 @@ puts errors
 check "...and the screen stays #{nw}x480", [Graphics.yami_native_width, Graphics.yami_native_height] == [nw, 480]
 check "...offsets/factor still neutral", $ResizeOffsetX == 0 && $ResizeOffsetY == 0 && $ResizeFactor == 1.0
 check "...existing title viewport unchanged", vp.native_rect == want
+# Myth sets the bordered size through the game's own resize_screen later on.
+Graphics.resize_screen(800, 600)
+Graphics.update
+check "after the game asks for 800x600: it still sees #{gw}x480", [Graphics.width, Graphics.height] == [gw, 480]
+check "...its @@width/@@height pinned", [Graphics.class_variable_get(:@@width), Graphics.class_variable_get(:@@height)] == [gw, 480]
+lvp = Viewport.new(0, 0, Graphics.width, Graphics.height)
+check "...a new screen still lands at #{want.inspect}", lvp.native_rect == want
+check "...engine still #{nw}x480", [Graphics.yami_native_width, Graphics.yami_native_height] == [nw, 480]
 check "engine never asked for a bordered size", Graphics.resizes.none? { |w, h| h > 480 }
+# Essentials' FontInstaller: fonts present in %SystemRoot%\Fonts -> no warning
+Dir.mkdir("Fonts") rescue nil
+File.binwrite("Fonts/pkmnem.ttf", "x")
+check "font installer finds the game's fonts", File.exist?(ENV["SystemRoot"] + "\\Fonts\\" + "PKMNEM.ttf")
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
 exit($fails.zero? ? 0 : 1)

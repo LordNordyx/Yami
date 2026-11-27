@@ -67,9 +67,27 @@ object EngineConfig {
             appendLine("status_file=${File(runtime.dir, "status-${game.id}.txt").absolutePath}")
         })
 
-        writeMkxpJson(gameDir, buildOverrides(game, s, app, runtime, cfg, optimizeMode))
+        val rgss = if (s.rgssVersionOverride in 1..3) s.rgssVersionOverride else game.rgssVersion
+        val vsync = s.vsync && displayPacesEvenly(context, if (rgss == 1) 40f else 60f)
+        writeMkxpJson(gameDir, buildOverrides(game, s.copy(vsync = vsync), app, runtime, cfg, optimizeMode))
         return Prepared(gameDir, dataDir, cfg)
     }
+
+    /**
+     * vsync only helps when the display can refresh at a whole multiple of the
+     * game's rate (RPG Maker XP: 40 fps -> 80/120 Hz; the player asks Android
+     * for that mode). On a 60 Hz-only screen a 40 fps game with vsync waits for
+     * an extra refresh on most frames and drops towards 30 fps; without vsync
+     * the engine keeps its own steady 40.
+     */
+    private fun displayPacesEvenly(context: Context, rate: Float): Boolean = runCatching {
+        val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching true
+        display.supportedModes.any { m ->
+            val k = Math.round(m.refreshRate / rate)
+            k >= 1 && kotlin.math.abs(m.refreshRate - k * rate) < 1.5f
+        }
+    }.getOrDefault(true)
 
     private fun buildOverrides(
         game: Game, s: GameSettings, app: AppSettings,

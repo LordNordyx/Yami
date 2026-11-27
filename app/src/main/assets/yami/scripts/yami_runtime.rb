@@ -608,6 +608,7 @@ module Yami
         if vp.respond_to?(:yami_vp_set_rect) && !(vp.disposed? rescue false)
           vp.yami_vp_set_rect(Rect.new(0, 0, *size))
           vp.instance_variable_set(:@yami_last, nil)
+          Yami::Wide::Layers.unclip(vp) if defined?(Yami::Wide::Layers)
         end
         @fade_size = size
       end
@@ -634,6 +635,21 @@ module Yami
       neutralize!
       apply unless active?
       fit if [Graphics.yami_native_width, Graphics.yami_native_height] != expected_size
+      pin_size!
+    end
+
+    # Sprite_Resizer keeps the screen size in Graphics' @@width/@@height and
+    # its resize_screen overwrites them with whatever it is asked for (Myth:
+    # the bordered 800x600). Code that reads them directly must see the size
+    # the game is laid out in: its own (panoramic) or the full one (full/off).
+    def pin_size!
+      w, h = base
+      if defined?(Yami::Wide) && Yami::Wide.on? && !Yami::Wide.panoramic?
+        w, h = Graphics.yami_native_width, Graphics.yami_native_height
+      end
+      [[:@@width, w], [:@@height, h]].each do |cv, v|
+        Graphics.class_variable_set(cv, v) if Graphics.class_variable_defined?(cv) && Graphics.class_variable_get(cv) != v
+      end
     end
   end
 end
@@ -726,6 +742,10 @@ module Yami
                        Sprite_Reflection|Sprite_Shadow|Sprite_SurfBase|DependentEvent|Weather|
                        RPG__Weather|PField_Weather|Overworld_?Weather|Follow)/ix
       INFRA_SECTION = /\A(?:Sprite_?Resizer)/i
+      # message system: textboxes / choices span the 16:9 width over the map
+      DIALOG_SECTION = /\A(?:Messages?\b|PokemonMessages|Window_Message)/ix
+      # window/text libraries: count as whoever called them
+      LIB_SECTION = /\A(?:SpriteWindow|DrawText|BitmapCache|SpriteWrapper|AnimatedBitmap|Sprite_Window)/ix
 
       # :render, :map, :ui or :infra for a backtrace path
       # (no path: code run from C, e.g. by the engine itself — never a game script)
@@ -740,6 +760,10 @@ module Yami
             :render
           elsif name =~ MAP_SECTION
             :map
+          elsif name =~ DIALOG_SECTION
+            :dialog
+          elsif name =~ LIB_SECTION
+            :lib
           else
             :ui
           end
@@ -797,6 +821,36 @@ module Yami
         false
       end
 
+      # Is this the message system, while the map is showing? (window
+      # libraries are transparent; anything else stops the search)
+      def dialog_caller?
+        return false unless Yami::Wide::Layers.map_shown_cached?
+        caller_locations(2, 40).each do |loc|
+          k = section_kind(loc.path)
+          next if k == :infra || k == :lib
+          return k == :dialog
+        end
+        false
+      rescue StandardError
+        false
+      end
+
+      # Shared full-width layer for wide dialogue (unclipped, above the map).
+      def dialog_viewport
+        rw, rh = Graphics.yami_width, Graphics.yami_height
+        v = @dialog_vp
+        if v.nil? || (v.disposed? rescue true) || @dialog_size != [rw, rh]
+          (v.dispose rescue nil) if v
+          v = Viewport.allocate
+          v.send(:yami_vp_init, 0, 0, rw, rh)
+          v.z = 99_999
+          Yami::Wide::Layers.unclip(v)
+          @dialog_vp = v
+          @dialog_size = [rw, rh]
+        end
+        v
+      end
+
       # Panoramic: "Show Picture" images are cutscene art in the game's
       # coordinates; centre the map's picture layer (Spriteset_Map @viewport2,
       # RMXP and Essentials) like other UI. Checked each frame: cheap.
@@ -824,8 +878,19 @@ module Yami
           loc = meth && meth.source_location
           next unless loc && !loc[0].to_s.include?("yami_")
           native = m == :width ? :yami_native_width : :yami_native_height
-          Graphics.define_singleton_method(m) { Yami::Wide.map_caller? ? send(native) : meth.call }
-          Yami.log("panoramic: wrapped the game's Graphics.#{m} (map code sees the full #{m})")
+          # Never the game's own value for UI: older Essentials keeps it in
+          # @@width/@@height, which Pokémon Myth sets to the bordered 800x600
+          # later on (menus/textboxes then laid out for 800x600 in a 640x480
+          # frame: shifted screens, text off screen).
+          idx = m == :width ? 0 : 1
+          Graphics.define_singleton_method(m) do
+            if Yami::Wide.map_caller? || (idx == 0 && Yami::Wide.dialog_caller?)
+              send(native)
+            else
+              (Yami::Wide.base || [send(native), send(native)])[idx]
+            end
+          end
+          Yami.log("panoramic: wrapped the game's Graphics.#{m} (UI: the game's size, map: the full #{m})")
         end
       end
 
@@ -861,13 +926,13 @@ if Yami::Wide.on?
     # Panoramic: UI code sees the original width; map code sees the full width.
     def width
       return yami_width unless Yami::Wide.panoramic?
-      Yami::Wide.map_caller? ? yami_width : Yami::Wide.base_w
+      Yami::Wide.map_caller? || Yami::Wide.dialog_caller? ? yami_width : Yami::Wide.base_w
     end
   end
 
   # Widen the default resolution right away (RMXP games never call resize_screen).
   Graphics.resize_screen(Graphics.yami_width, Graphics.height)
-  Yami.on_tick { Yami::Wide.claim!; Yami::Wide.center_pictures!; Yami::Wide::Curtains.sync }
+  Yami.on_tick { Yami::Wide.claim!; Yami::Wide.center_pictures!; Yami::Wide::Curtains.sync; Yami::Wide::Layers.sync }
   # map overlay classes, as soon as they exist (one constant lookup per frame)
   Yami.on_tick { Yami::Wide.wrap_render_classes! }
 
@@ -875,16 +940,16 @@ if Yami::Wide.on?
   module Yami::Wide
     # Where a viewport the game asks for should really be drawn. Returns the
     # rect and whether it is a centred full-screen UI viewport.
+    # kind: :ui_full (centred full-screen UI), :ui (centred), :map (map code,
+    # panoramic), :plain (full / off modes)
     def self.adjust(x, y, w, h)
       bw, bh = base
       full = x == 0 && w == bw && h == bh
-      if panoramic? && !map_caller?
-        [[x + margin, y, w, h], full]
-      elsif full
-        [[x, y, Graphics.yami_width, h], false] # map layers / full-screen effects span the display
-      else
-        [[x, y, w, h], false]
+      if panoramic?
+        return [[x, y, (full ? Graphics.yami_width : w), h], :map] if map_caller?
+        return [[x + margin, y, w, h], full ? :ui_full : :ui]
       end
+      [[x, y, (full ? Graphics.yami_width : w), h], :plain] # full-screen effects span the display
     end
 
     # Panoramic: fades and flashes on a centred full-screen UI viewport (its
@@ -897,6 +962,7 @@ if Yami::Wide.on?
         def make(x, w)
           v = Viewport.allocate
           v.send(:yami_vp_init, x, 0, w, Graphics.yami_height)
+          Yami::Wide::Layers.unclip(v)
           v
         end
 
@@ -931,6 +997,97 @@ if Yami::Wide.on?
     end
   end
 
+  # --- adaptive layers ----------------------------------------------------------
+  # Panoramic: the engine clips every UI element to the centred box (UI never
+  # spills into the sides) except layers marked unclipped (map, fades,
+  # curtains). When a full-screen UI scene covers the map, or no map is shown,
+  # the engine fills the sides with a soft, dimmed enlargement of the box
+  # instead of black bars ("ambient"); over the map (pause menu, dialogue) the
+  # sides show the map.
+  module Yami::Wide::Layers
+    AMBIENT_DIM = 45 # percent
+    @map_vps = []
+    @ui_full = []   # [viewport, [children]]
+    @state = nil
+
+    class << self
+      def engine?; Graphics.respond_to?(:yami_ui_clip); end
+
+      def unclip(o)
+        o.yami_unclipped = true if o.respond_to?(:yami_unclipped=)
+      rescue StandardError
+      end
+
+      def classify(vp, kind)
+        case kind
+        when :map
+          unclip(vp)
+          @map_vps << vp unless @map_vps.any? { |v| v.equal?(vp) }
+        when :ui_full
+          Yami::Wide::Curtains.track(vp)
+          @ui_full << [vp, []] unless @ui_full.any? { |v, _| v.equal?(vp) }
+        end
+      end
+
+      # children of full-screen UI viewports (background detection)
+      def adopt(child, vp)
+        return unless vp
+        e = @ui_full.find { |v, _| v.equal?(vp) }
+        e[1] << child if e && !e[1].any? { |c| c.equal?(child) }
+      end
+
+      def alive?(o); !(o.disposed? rescue true); end
+
+      # an opaque picture covering (most of) the box: a full-screen scene
+      def covering?(vp, kids)
+        bw, bh = Yami::Wide.base
+        kids.reject! { |c| !alive?(c) }
+        kids.any? do |c|
+          next false unless (c.visible rescue false)
+          b = (c.bitmap rescue nil)
+          next false unless b && !(b.disposed? rescue true)
+          next false if ((c.opacity rescue nil) || 255) < 200
+          next true if c.is_a?(Plane) # tiles the whole viewport
+          zx = (c.zoom_x rescue nil) || 1
+          zy = (c.zoom_y rescue nil) || 1
+          b.width * zx >= bw * 0.9 && b.height * zy >= bh * 0.5 && ((c.x rescue nil) || 0) <= bw * 0.1
+        end
+      end
+
+      def map_shown?
+        @map_vps.reject! { |v| !alive?(v) }
+        top = @map_vps.select { |v| v.visible }.map { |v| v.z.to_i }.max
+        return false unless top
+        @ui_full.reject! { |v, _| !alive?(v) }
+        @ui_full.none? { |v, kids| v.visible && v.z.to_i >= top && covering?(v, kids) }
+      end
+
+      def map_shown_cached?
+        @map_shown_cached = map_shown? if @map_shown_cached.nil?
+        @map_shown_cached
+      end
+
+      def sync
+        @map_shown_cached = Yami::Wide.panoramic? ? map_shown? : false
+        return unless engine?
+        pano = Yami::Wide.panoramic?
+        m = Yami::Wide.margin
+        bw, bh = Yami::Wide.base || [Graphics.yami_width, Graphics.yami_height]
+        clip = pano && m > 0 ? [m, 0, bw, bh] : nil
+        amb = clip && !@map_shown_cached ? [m, bw, AMBIENT_DIM] : nil
+        state = [clip, amb]
+        return if state == @state
+        @state = state
+        clip ? Graphics.yami_ui_clip(*clip) : Graphics.yami_ui_clip_off
+        amb ? Graphics.yami_ambient(*amb) : Graphics.yami_ambient_off
+      rescue StandardError => e
+        Yami.log("layers: #{e.class}: #{e.message}")
+        @state = :error
+        (Graphics.yami_ui_clip_off; Graphics.yami_ambient_off) rescue nil
+      end
+    end
+  end
+
   class Viewport
     alias_method :yami_vp_init, :initialize
     alias_method :yami_vp_set_rect, :rect= if method_defined?(:rect=)
@@ -946,10 +1103,10 @@ if Yami::Wide.on?
         a = [r.x, r.y, r.width, r.height]
       end
       return yami_vp_init(*a) unless a.size == 4
-      n, full = Yami::Wide.adjust(*a)
+      n, kind = Yami::Wide.adjust(*a)
       @yami_last = n
       yami_vp_init(*n)
-      Yami::Wide::Curtains.track(self) if full
+      Yami::Wide::Layers.classify(self, kind)
     end
 
     # Older Essentials creates every viewport as 100x100 and sets the real
@@ -959,10 +1116,10 @@ if Yami::Wide.on?
       return yami_vp_set_rect(r) unless r.respond_to?(:width)
       v = [r.x, r.y, r.width, r.height]
       return yami_vp_set_rect(r) if v == @yami_last
-      n, full = Yami::Wide.adjust(*v)
+      n, kind = Yami::Wide.adjust(*v)
       @yami_last = n
       yami_vp_set_rect(n == v ? r : Rect.new(*n))
-      Yami::Wide::Curtains.track(self) if full
+      Yami::Wide::Layers.classify(self, kind)
     end
   end
 
@@ -979,7 +1136,21 @@ if Yami::Wide.on?
       setvp = k.instance_method(:viewport=)
       k.send(:define_method, :initialize) do |*a, &b|
         init.bind(self).call(*a, &b)
-        @yami_ui = Yami::Wide.panoramic? && !a[0].is_a?(Viewport) && viewport.nil? && !Yami::Wide.map_caller?
+        @yami_ui = false
+        if Yami::Wide.panoramic?
+          vp = viewport
+          if vp
+            Yami::Wide::Layers.adopt(self, vp)
+          elsif !a[0].is_a?(Viewport)
+            if Yami::Wide.map_caller?
+              Yami::Wide::Layers.unclip(self) # map overlay drawn without a viewport
+            elsif is_a?(Sprite) && Yami::Wide.dialog_caller?
+              setvp.bind(self).call(Yami::Wide.dialog_viewport) # wide textbox over the map
+            else
+              @yami_ui = true
+            end
+          end
+        end
         # VX/Ace style Window.new(x, y, w, h) already placed it; re-apply offset
         self.x = (a[0].is_a?(Integer) ? a[0] : 0) if @yami_ui
       end
@@ -993,7 +1164,23 @@ if Yami::Wide.on?
         lx = x
         setvp.bind(self).call(v)
         @yami_ui = Yami::Wide.panoramic? && v.nil? && !Yami::Wide.map_caller?
+        Yami::Wide::Layers.adopt(self, v) if v && Yami::Wide.panoramic?
         self.x = lx
+      end
+    end
+
+    # planes: background detection only (no offset: a plane tiles its viewport)
+    unless Plane.instance_variable_get(:@yami_ui_hooked)
+      Plane.instance_variable_set(:@yami_ui_hooked, true)
+      pinit = Plane.instance_method(:initialize)
+      psetvp = Plane.instance_method(:viewport=)
+      Plane.send(:define_method, :initialize) do |*a, &b|
+        pinit.bind(self).call(*a, &b)
+        Yami::Wide::Layers.adopt(self, a[0]) if a[0].is_a?(Viewport) && Yami::Wide.panoramic?
+      end
+      Plane.send(:define_method, :viewport=) do |v|
+        psetvp.bind(self).call(v)
+        Yami::Wide::Layers.adopt(self, v) if v && Yami::Wide.panoramic?
       end
     end
   end
