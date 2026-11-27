@@ -97,6 +97,32 @@ check "Object#to_a → [self]", o.to_a == [o] && Array(o) == [o] && [*o] == [o]
 check "attribute ids win over Object#id", Struct.new(:id).new(5).id == 5
 skipped = `#{RbConfig.ruby} -e 'ENV["YAMI_RGSS"]="3"; def print(*); end; load ARGV[0]; puts Thread.respond_to?(:critical=)' #{SCRIPTS}/yami_ruby18.rb 2>/dev/null`.strip
 check "VX Ace (RGSS3) keeps modern Ruby (no shims)", skipped == "false"
+# --- Kernel#proc: 1.8 return semantics (crash: 'Pause Menu' unexpected return) ---
+# Handlers built by a script and called later, after their creator returned
+# (mkxp-z runs sections from C: a `return` there raises LocalJumpError).
+MENU_CMDS = eval(<<~RB, TOPLEVEL_BINDING, "120:Pause Menu")
+  def yami_t_menu_cmds; [proc { |m| return :bag if m == 1; :other }, proc { return 5 }]; end
+  yami_t_menu_cmds
+RB
+r = begin; [MENU_CMDS[0].call(1), MENU_CMDS[0].call(2), MENU_CMDS[1].call]; rescue LocalJumpError => e; e; end
+check "proc { return } defined at load, called later: returns its value (1.8)", r == [:bag, :other, 5]
+h = proc { |sender, a, b| [sender, a, b] }
+check "arity preserved (Essentials' events dispatch on it)", h.arity == 3 && proc { |x| }.arity == 1 && proc {}.arity == 0
+check "lenient arguments kept", h.call(1) == [1, nil, nil] && proc { |a, b| [a, b] }.call([1, 2]) == [1, 2]
+check "lambda untouched", lambda { |x| x }.lambda? && (begin; lambda { |x| }.call; false; rescue ArgumentError; true; end)
+check "Proc.new untouched", Proc.new { 1 }.call == 1
+def yami_t_block_arg; proc { |x| x * 2 }; end
+check "proc with block value", yami_t_block_arg.call(4) == 8
+def yami_t_dead; proc { return :from_dead_home }; end
+check "return after the defining method finished (the crash)", yami_t_dead.call == :from_dead_home
+unwrapped = `#{RbConfig.ruby} -e 'def m; proc { return 1 }; end; begin; m.call; rescue LocalJumpError; puts :lje; end'`.strip
+check "precondition: plain Ruby 3 raises LocalJumpError here", unwrapped == "lje"
+check "next / break-free results", [1, 2, 3].map(&proc { |x| next x + 1 }) == [2, 3, 4]
+def yami_t_nested; proc { [1, 2].each { |x| return x * 10 if x == 2 }; :none }; end
+check "return from nested block inside a proc", yami_t_nested.call == 20
+def yami_t_live; p2 = proc { return :inner }; v = p2.call; [:after, v]; end
+check "return while the defining method is still running behaves like Ruby 3 (no crash)", yami_t_live == :inner
+check "proc without a block still raises", (begin; proc; false; rescue ArgumentError; true; end)
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
 exit($fails.zero? ? 0 : 1)

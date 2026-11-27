@@ -718,13 +718,46 @@ index 0000000..c52d244
 +     option(TTF_WITH_HARFBUZZ "use harfbuzz to improve text shaping" OFF)
 + 
 +     add_library(SDL2_ttf SHARED)
+diff --git a/subprojects/packagefiles/sdl2_ttf-yami-metrics.patch b/subprojects/packagefiles/sdl2_ttf-yami-metrics.patch
+new file mode 100644
+index 0000000..856c12e
+--- /dev/null
++++ b/subprojects/packagefiles/sdl2_ttf-yami-metrics.patch
+@@ -0,0 +1,26 @@
++diff --git a/SDL_ttf.c b/SDL_ttf.c
++index a360dea..77721f8 100644
++--- a/SDL_ttf.c
+++++ b/SDL_ttf.c
++@@ -1793,10 +1793,17 @@ static int TTF_initFontMetrics(TTF_Font *font)
++     if (FT_IS_SCALABLE(face)) {
++         /* Get the scalable font metrics for this font */
++         FT_Fixed scale       = face->size->metrics.y_scale;
++-        font->ascent         = FT_CEIL(FT_MulFix(face->ascender, scale));
++-        font->descent        = FT_CEIL(FT_MulFix(face->descender, scale));
++-        font->height         = FT_CEIL(FT_MulFix(face->ascender - face->descender, scale));
++-        font->lineskip       = FT_CEIL(FT_MulFix(face->height, scale));
+++        /* [yami] Some fonts store the hhea descent as a positive number
+++         * (all of Pokémon Essentials' "Power" fonts). Windows uses the OS/2
+++         * metrics and never notices; taken literally, the line height shrinks
+++         * by twice the descent (Power Green: 640 units instead of 1024), so
+++         * text_size under-reports and glyph bottoms fall outside the surface. */
+++        FT_Pos ascender      = face->ascender;
+++        FT_Pos descender     = face->descender > 0 ? -face->descender : face->descender;
+++        font->ascent         = FT_CEIL(FT_MulFix(ascender, scale));
+++        font->descent        = FT_CEIL(FT_MulFix(descender, scale));
+++        font->height         = FT_CEIL(FT_MulFix(ascender - descender, scale));
+++        font->lineskip       = FT_CEIL(FT_MulFix(SDL_max((FT_Pos)face->height, ascender - descender), scale));
++         underline_offset     = FT_FLOOR(FT_MulFix(face->underline_position, scale));
++         font->line_thickness = FT_FLOOR(FT_MulFix(face->underline_thickness, scale));
++     } else {
 diff --git a/subprojects/sdl2_ttf.wrap b/subprojects/sdl2_ttf.wrap
-index d2b431f..eb0f4ca 100644
+index d2b431f..7219d6c 100644
 --- a/subprojects/sdl2_ttf.wrap
 +++ b/subprojects/sdl2_ttf.wrap
-@@ -6,4 +6,5 @@ directory = SDL_ttf-release-2.0.18
+@@ -6,4 +6,6 @@ directory = SDL_ttf-release-2.0.18
  method = cmake
  diff_files =
      sdl2_ttf-deps.patch,
 +    sdl2_ttf-android-static.patch,
++    sdl2_ttf-yami-metrics.patch,
      end-of-diff-files.patch

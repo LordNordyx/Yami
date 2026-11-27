@@ -101,6 +101,8 @@ object EngineConfig {
         p("frameSkip", s.frameSkip)
         p("displayFPS", s.showEngineFps)
         p("pathCache", true)
+        // Yami tells map code from UI by script section name ("NNN:Name").
+        p("useScriptNames", true)
         p("enableSettings", false) // F1 desktop menu is useless on touch; Yami has its own
         p("enableReset", true)
         if (s.fontScale > 0f) p("fontScale", s.fontScale.toDouble())

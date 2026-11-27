@@ -111,6 +111,17 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         Os.setenv("YAMI_CFG", prepared.cfgFile.absolutePath, true)
         Os.setenv("YAMI_DATA_DIR", prepared.dataDir.absolutePath, true)
         Os.setenv("SDL_ANDROID_TRAP_BACK_BUTTON", "1", true)
+        // Ruby GC: Essentials allocates heavily every frame; a bigger starting
+        // heap and malloc limits mean far fewer collections (each one a hitch).
+        mapOf(
+            "RUBY_GC_HEAP_INIT_SLOTS" to "400000",
+            "RUBY_GC_HEAP_FREE_SLOTS" to "100000",
+            "RUBY_GC_HEAP_GROWTH_FACTOR" to "1.4",
+            "RUBY_GC_MALLOC_LIMIT" to "67108864",
+            "RUBY_GC_MALLOC_LIMIT_MAX" to "134217728",
+            "RUBY_GC_OLDMALLOC_LIMIT" to "67108864",
+            "RUBY_GC_OLDMALLOC_LIMIT_MAX" to "268435456",
+        ).forEach { (k, v) -> Os.setenv(k, v, true) }
         // System.user_language in the engine (Essentials reads it for its language setting)
         Os.setenv("LANG", java.util.Locale.getDefault().toString().ifBlank { "en_US" } + ".UTF-8", true)
 
@@ -138,10 +149,29 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             info?.let { v ->
                 v.turbo = turboActive
                 v.fps = m["fps"]?.toIntOrNull() ?: v.fps
+                m["rate"]?.toFloatOrNull()?.let { matchDisplayRate(it) }
                 if (m.containsKey("fps")) v.engineAlive = true
                 v.refresh()
             }
         }.also { it.start() }
+    }
+
+    private var matchedRate = 0f
+
+    /**
+     * RPG Maker XP runs at 40 fps, which can't be paced evenly on a 60 Hz display
+     * (frames alternate between 2 and 1 refreshes: judder). Tell Android the
+     * content rate; it then picks a display mode that divides evenly (e.g. 120 Hz)
+     * where the device has one. Android 11+.
+     */
+    private fun matchDisplayRate(rate: Float) {
+        if (Build.VERSION.SDK_INT < 30 || rate <= 0f || rate == matchedRate) return
+        val surface = SDLActivity.mSurface?.holder?.surface ?: return
+        if (!surface.isValid) return
+        runCatching {
+            surface.setFrameRate(rate, android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE)
+            matchedRate = rate
+        }.onFailure { android.util.Log.w("Yami", "setFrameRate($rate) failed", it) }
     }
 
     private fun displayAspect(): Float {
@@ -341,6 +371,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         super.onResume()
         resumedAt = SystemClock.elapsedRealtime()
         hideSystemBars()
+        matchedRate = 0f // the surface may have been recreated; re-apply on the next status update
     }
 
     override fun onPause() {

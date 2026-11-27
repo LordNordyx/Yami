@@ -143,6 +143,40 @@ module Yami
       define_missing(Object, :id) { object_id }
       define_missing(Object, :type) { self.class }
       define_missing(Object, :to_a) { [self] }
+      install_proc18
+    end
+
+    # Ruby 1.8's Kernel#proc made a lambda: `return` inside it returned from the
+    # proc. Since 1.9 it is a plain Proc, whose `return` tries to leave the
+    # method that created it; if that method has finished (handlers defined at
+    # script load and called later, as custom pause menus do), Ruby raises
+    # LocalJumpError "unexpected return". This turns that case back into the
+    # 1.8 result: the proc returns the value. Arity/parameters are preserved
+    # (Essentials' events dispatch on callback.arity); lambda and Proc.new
+    # are untouched.
+    def self.install_proc18
+      return if Kernel.private_method_defined?(:yami_proc19)
+      Kernel.module_eval do
+        alias_method :yami_proc19, :proc
+        private :yami_proc19
+        def proc(&body)
+          return yami_proc19 unless body # raises as Ruby 3 does without a block
+          return body if body.lambda?
+          wrapped = ::Proc.new do |*a, &blk|
+            begin
+              body.call(*a, &blk)
+            rescue LocalJumpError => e
+              raise unless e.reason == :return
+              e.exit_value
+            end
+          end
+          wrapped.define_singleton_method(:arity) { body.arity }
+          wrapped.define_singleton_method(:parameters) { body.parameters }
+          wrapped.define_singleton_method(:source_location) { body.source_location }
+          wrapped
+        end
+        private :proc
+      end
     end
   end
 end

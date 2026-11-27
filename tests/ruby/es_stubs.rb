@@ -13,7 +13,8 @@ end
 
 class Color
   attr_accessor :red, :green, :blue, :alpha
-  def initialize(r = 0, g = 0, b = 0, a = 255); @red, @green, @blue, @alpha = r, g, b, a; end
+  def initialize(r = 0, g = 0, b = 0, a = 255); set(r, g, b, a); end
+  def set(r, g, b, a = 255); @red, @green, @blue, @alpha = r, g, b, a; self; end
 end
 
 class Tone; def initialize(*); end; end
@@ -25,7 +26,15 @@ class Table
   def []=(*a); v = a.pop; x, y, z = a; @d[x + (y || 0) * @xsize + (z || 0) * @xsize * @ysize] = v; end
 end
 
-class Font; attr_accessor :size, :name, :color, :bold; end
+class Font
+  attr_accessor :size, :name, :color, :bold, :italic, :shadow, :outline, :out_color
+  class << self
+    attr_accessor :default_name, :default_size, :default_bold, :default_italic, :default_color,
+                  :default_shadow, :default_outline, :default_out_color
+    def exist?(_n); true; end
+  end
+  def initialize(n = nil, s = 24); @name = n; @size = s; @color = Color.new(255, 255, 255); end
+end
 
 class Bitmap
   attr_reader :width, :height, :font
@@ -35,6 +44,9 @@ class Bitmap
     @font = Font.new
   end
   def rect; Rect.new(0, 0, @width, @height); end
+  def text_size(t); Rect.new(0, 0, t.to_s.size * 12, @font.size || 24); end
+  def font=(f); @font = f; end
+  def hue_change(*); end; def blur; end; def set_pixel(*); end; def clone; Bitmap.new(@width, @height); end
   def get_pixel(*); Color.new(0, 0, 0, 255); end
   def fill_rect(*); end; def clear; end; def blt(*); end; def stretch_blt(*); end
   def draw_text(*); end; def dispose; @disposed = true; end; def disposed?; !!@disposed; end
@@ -127,7 +139,13 @@ module Input
   end
 end
 
-module Audio; end
+module Audio
+  %i[bgm bgs me se].each do |k|
+    define_singleton_method(:"#{k}_play") { |*| nil }
+    define_singleton_method(:"#{k}_stop") { |*| nil }
+    define_singleton_method(:"#{k}_fade") { |*| nil }
+  end
+end
 module RPG; module Cache; def self.load_bitmap(*); Bitmap.new(640, 480); end; end; end
 
 def load_data(p, raw = false); d = File.binread(p); raw ? d : Marshal.load(d); end

@@ -188,9 +188,11 @@ else # essentials
   module Settings; SCREEN_WIDTH = 512; SCREEN_HEIGHT = 384; end
   Graphics.resize_screen(512, 384)
   check "resize_screen(512,384) widened", Graphics.yami_width == 684 && Graphics.height == 384
-  class Game_Map; TILE_WIDTH = 32; X_SUBPIXELS = 4; def update; Graphics.width; end; end
-  class Game_Player; SCREEN_CENTER_X = 999; end
-  class Spriteset_Map; def initialize; @vp = Viewport.new(0, 0, Graphics.width, Graphics.height); end; attr_reader :vp; end
+  # Defined in sections named like the game's (mkxp-z: "NNN:Name").
+  eval("class Game_Map; TILE_WIDTH = 32; X_SUBPIXELS = 4; def update; Graphics.width; end; end", TOPLEVEL_BINDING, "015:Game_Map")
+  eval("class Game_Player; SCREEN_CENTER_X = 999; end", TOPLEVEL_BINDING, "021:Game_Player")
+  eval("class Spriteset_Map; def initialize; @vp = Viewport.new(0, 0, Graphics.width, Graphics.height); end; attr_reader :vp; end",
+       TOPLEVEL_BINDING, "029:Spriteset_Map")
   Graphics.update
   check "Game_Player::SCREEN_CENTER_X uses real width", Game_Player::SCREEN_CENTER_X == ((684 / 2) - 16) * 4
   if mode == "full"

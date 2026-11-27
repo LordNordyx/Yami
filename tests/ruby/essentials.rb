@@ -83,17 +83,111 @@ check "sprite inside a viewport not offset", s2.native_pos[0] == 10
 check "screenshots use the engine", Graphics.snap_to_bitmap == :native_snap
 
 # --- the map (camera, tilemap and map viewports read Graphics.width) ---
-class Spriteset_Map
-  attr_reader :vp, :seen_w
-  def initialize; @seen_w = Graphics.width; @vp = Viewport.new(0, 0, Graphics.width, Graphics.height); end
-end
+eval(<<~RB, TOPLEVEL_BINDING, "039:Event")
+  $sprite_handlers = []
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "029:Spriteset_Map")
+  class Spriteset_Map
+    attr_reader :vp, :seen_w, :overlays
+    def initialize
+      @seen_w = Graphics.width
+      @vp = Viewport.new(0, 0, Graphics.width, Graphics.height)
+      @viewport2 = Viewport.new(0, 0, Graphics.width, Graphics.height) # "Show Picture" layer
+      @overlays = $sprite_handlers.map { |h| h.call(@vp) }              # Events.onSpritesetCreate
+    end
+    def pictures; @viewport2; end
+  end
+RB
+# Dark-cave sprite (v17 PField_Field): built inside the spriteset, re-centred by Flash later.
+eval(<<~RB, TOPLEVEL_BINDING, "098:PField_Field")
+  class DarknessSprite < Sprite
+    attr_reader :cx
+    def initialize(vp = nil); super(vp); refresh; end
+    def radius=(v); @radius = v; refresh; end
+    def refresh; @cx = Graphics.width / 2; end
+  end
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "102:PField_HiddenMoves")
+  def pbUseFlash(d); d.radius = 176; d.cx; end
+RB
+# Dark-cave overlay: an event handler in another section, run while the spriteset is built.
+eval(<<~RB, TOPLEVEL_BINDING, "131:PField_FieldMoves")
+  $sprite_handlers << proc { |vp| [Graphics.width, Graphics.height] }
+RB
+# A battle scene and a message window, started from inside map logic.
+eval(<<~RB, TOPLEVEL_BINDING, "160:PokeBattle_Scene")
+  def pbStartTestBattle
+    vp = Viewport.new(0, 0, Graphics.width, Graphics.height)
+    databox_x = Graphics.width - 244
+    [vp, databox_x, Graphics.width]
+  end
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "060:Messages")
+  def pbTestMessage
+    w = Sprite.new          # message window frame, no viewport
+    w.x = 0
+    [w, Graphics.width]
+  end
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "021:Game_Player")
+  class Game_Player
+    def update_with_encounter; pbStartTestBattle; end
+    def camera_width; Graphics.width; end
+  end
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "023:Game_Event")
+  class Game_Event; def run_message_event; pbTestMessage; end; end
+RB
+eval(<<~RB, TOPLEVEL_BINDING, "031:Scene_Map")
+  class Scene_Map; def initialize; @spriteset = Spriteset_Map.new; end; attr_reader :spriteset; end
+RB
 # Defined after the first viewport existed, as in Essentials; map context
 # comes from Yami's own wrappers.
 Graphics.update
-sm = Spriteset_Map.new
+$scene = Scene_Map.new
+sm = $scene.spriteset
 check "map code sees the full #{nw}-pixel width", sm.seen_w == nw
 check "map viewport spans the display", sm.vp.native_rect == [0, 0, nw, 480]
+check "dark-cave overlay built from an event handler covers the display", sm.overlays.first == [nw, 480]
+check "camera (Game_Player) sees the full width", Game_Player.new.camera_width == nw
+Graphics.update # first frames: the game's scripts are all loaded
+dark = eval("DarknessSprite.new", TOPLEVEL_BINDING, "029:Spriteset_Map")
+check "dark-cave light centred on the display", dark.cx == nw / 2
+check "...and still after Flash re-centres it from field-move code", pbUseFlash(dark) == nw / 2
+check "dark-cave sprite not shifted like UI", dark.native_pos[0] == 0
 check "menus still see the game's width afterwards", Graphics.width == gw
+Graphics.update
+pic = { "full" => [0, 0, 852, 480], "panoramic" => [106, 0, 640, 480], "off" => [0, 0, 640, 480] }[mode]
+check "map picture layer at #{pic.inspect}", sm.pictures.native_rect == pic
+
+# A wild battle starts inside Game_Player#update: it must still be laid out as UI.
+bvp, dbx, bw = Game_Player.new.update_with_encounter
+check "battle started from the map sees #{gw} px", bw == gw && dbx == gw - 244
+check "battle viewport at #{want.inspect}", bvp.native_rect == want
+# An event's message runs inside the map update: still UI.
+msg, mw = Game_Event.new.run_message_event
+check "event message sees #{gw} px", mw == gw
+check "event message window placed at x=#{mode == 'panoramic' ? 106 : 0}", msg.native_pos[0] == (mode == "panoramic" ? 106 : 0)
+
+# Fade to black on a full-screen UI viewport covers the whole display.
+eval(<<~RB, TOPLEVEL_BINDING, "100:PSystem_Utilities")
+  def pbTestFade; v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999; v.color = Color.new(0, 0, 0, 255); v; end
+RB
+fv = pbTestFade
+Graphics.update
+cur = defined?(Yami::Wide::Curtains) && Yami::Wide::Curtains.instance_variable_get(:@list).find { |v, _| v.equal?(fv) }
+if mode == "panoramic"
+  sides = cur && cur[1]
+  ok = sides && sides.map(&:native_rect) == [[0, 0, 106, 480], [746, 0, 106, 480]] &&
+       sides.all? { |c| c.visible && c.color.alpha == 255 && c.z == 99999 }
+  check "fade covers the side margins too", ok
+  fv.color = Color.new(0, 0, 0, 0); Graphics.update
+  check "margins clear again after the fade", sides.none?(&:visible)
+  fv.dispose; Graphics.update
+  check "curtains go away with their viewport", sides.all?(&:disposed?)
+else
+  check "no curtains needed outside panoramic", !cur || cur[1].nil?
+end
 
 # --- image loader's Windows temp folder ---
 ok = begin; Dir.chdir(ENV["TEMP"]) { File.write("t.png", "x") }; true; rescue StandardError => e; puts e.message; false; end

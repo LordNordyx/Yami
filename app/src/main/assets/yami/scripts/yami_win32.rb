@@ -57,10 +57,7 @@ module YamiWin32
   # Input.update, which games that replace Input never call; it is only the
   # fallback.
   def raw_states
-    live = (Input.yami_live_key_states rescue nil)
-    return live if live.is_a?(String)
-    s = (Input.raw_key_states rescue nil)
-    s.is_a?(Array) ? s : []
+    Yami.respond_to?(:key_states) ? Yami.key_states : ((Input.yami_live_key_states rescue nil) || [])
   end
 
   def pressed?(states, sc)
@@ -227,6 +224,8 @@ module YamiWin32
     when "clienttoscreen", "screentoclient" then 1
     when "getcursorpos"
       x = (Input.mouse_x rescue 0); y = (Input.mouse_y rescue 0)
+      # panoramic: menus are centred and work in the game's own coordinates
+      x -= Yami::Wide.margin if defined?(Yami::Wide) && Yami::Wide.panoramic?
       fill(args[0], [x, y].pack("l2")); 1
     when "getsystemmetrics"
       w, h = screen_size
@@ -278,17 +277,38 @@ end
 class Win32API
   attr_reader :dll, :func
 
+  KNOWN_SET = YamiWin32::KNOWN.to_h { |n| [n, true] }.freeze
+  NAMES = {} # func name -> resolved name (Essentials creates these objects every frame)
+  # Calls made for every key, every frame by older Essentials' input code
+  # (GetAsyncKeyState + pbSameThread). Kept off the generic dispatcher.
+  FAST = {
+    "getasynckeystate" => ->(a) { YamiWin32.key_down?(a[0]) ? 0x8000 : 0 },
+    "getkeystate" => ->(a) { YamiWin32.key_down?(a[0]) ? 0x8000 : 0 },
+    "getforegroundwindow" => ->(_a) { YamiWin32::HWND },
+    "getactivewindow" => ->(_a) { YamiWin32::HWND },
+    "getcurrentthreadid" => ->(_a) { 1 },
+    "getcurrentprocessid" => ->(_a) { 1 },
+    "getwindowthreadprocessid" => ->(_a) { 1 },
+  }.freeze
+
+  def self.resolve(func)
+    NAMES[func] ||= begin
+      # GetPrivateProfileStringA / ...W → getprivateprofilestring
+      n = func.downcase
+      n = n[0..-2] if !KNOWN_SET[n] && n =~ /[aw]\z/ && KNOWN_SET[n[0..-2]]
+      n.freeze
+    end
+  end
+
   def initialize(dll = "", func = "", imports = nil, export = nil, *_rest)
     @dll = dll.to_s
     @func = func.to_s
-    # GetPrivateProfileStringA / ...W → getprivateprofilestring
-    n = @func.downcase
-    n = n[0..-2] if !YamiWin32::KNOWN.include?(n) && n =~ /[aw]\z/ && YamiWin32::KNOWN.include?(n[0..-2])
-    @name = n
+    @name = Win32API.resolve(@func)
+    @fast = FAST[@name]
   end
 
   def call(*args)
-    YamiWin32.call(@name, args)
+    @fast ? @fast.call(args) : YamiWin32.call(@name, args)
   end
   alias Call call
 end
@@ -345,15 +365,18 @@ module Yami
       s.include?("\\") ? s.tr("\\", "/") : s
     end
 
-    def flush; @cache.clear; end
+    def flush; @cache.clear; @resolved.clear; end
+    @resolved = {}
 
+    # dir -> [exact names, downcased -> real name]; one directory read each
     def listing(dir)
       @cache[dir] ||= begin
+        names = ORIG[:children].call(dir)
         h = {}
-        ORIG[:children].call(dir).each { |n| h[n.downcase] ||= n }
-        h
+        names.each { |n| h[n.downcase] ||= n }
+        [names.to_h { |n| [n, true] }, h]
       rescue StandardError
-        {}
+        [{}, {}]
       end
     end
 
@@ -362,7 +385,16 @@ module Yami
     def resolve(f)
       return f unless path_arg?(f)
       s = norm(f)
-      return s if s.empty? || ORIG[:exist].call(s)
+      return s if s.empty?
+      key = s.is_a?(String) ? s : s.to_s
+      hit = @resolved[key]
+      return hit if hit
+      return(@resolved[key] = s) if ORIG[:exist].call(s)
+      @resolved.clear if @resolved.size > 4096 # bounded; images are probed by many paths
+      @resolved[key] = resolve_parts(s)
+    end
+
+    def resolve_parts(s)
       s = s.b unless s.valid_encoding? # Windows-1252 names from old scripts
       abs = s.start_with?("/")
       parts = s.split("/")
@@ -375,7 +407,8 @@ module Yami
           cur = File.join(cur, part)
           next
         end
-        real = ORIG[:exist].call(File.join(cur, part)) ? part : listing(cur)[part.downcase]
+        exact, lower = listing(cur)
+        real = exact[part] ? part : lower[part.downcase]
         unless real
           out.concat(parts[i..-1])
           break
@@ -459,7 +492,20 @@ module Yami
   end
 
   module WinDir
-    %i[chdir exist? entries children foreach each_child empty?].each do |m|
+    # Relative lookups depend on the current folder: drop cached resolutions
+    # when it changes (and again when a block-form chdir returns).
+    def chdir(*a, **k, &blk)
+      a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
+      Yami::WinFS.flush
+      if blk
+        k.empty? ? super(*a) { |*x| Yami::WinFS.flush; blk.call(*x) }.tap { Yami::WinFS.flush } :
+                   super(*a, **k) { |*x| Yami::WinFS.flush; blk.call(*x) }.tap { Yami::WinFS.flush }
+      else
+        k.empty? ? super(*a) : super(*a, **k)
+      end
+    end
+
+    %i[exist? entries children foreach each_child empty?].each do |m|
       next unless Dir.respond_to?(m)
       define_method(m) do |*a, **k, &b|
         a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])

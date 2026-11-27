@@ -139,6 +139,11 @@ check "File.basename/extname understand backslashes", File.basename("Graphics\\P
 check "Dir.chdir resolves case", Dir.chdir("graphics/PICTURES") { File.exist?("Title.PNG") }
 check "Dir.entries resolves case", Dir.entries("GRAPHICS/pictures").include?("Title.PNG")
 check "non-UTF-8 name doesn't crash", (File.exist?("Graphics/Pok\xE9mon.png".b) rescue :err) == false
+Dir.mkdir("Other") rescue nil; File.binwrite("Other/title.png", "O")
+check "lookups follow the current folder", File.read("graphics/pictures/title.png") == "T" &&
+  Dir.chdir("Other") { File.read("TITLE.png") } == "O" && File.read("graphics/pictures/title.png") == "T"
+File.binwrite("Graphics/Pictures/New.png", "N")
+check "file created after a cached miss is found", File.exist?("graphics/pictures/new.png")
 check "File.open with block returns block value", File.open("Graphics/Pictures/title.png", "rb") { |f| f.read } == "T"
 check "MiniFFI alias", MiniFFI == Win32API
 check "no message boxes", $msgboxes == 0
