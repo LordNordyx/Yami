@@ -186,6 +186,18 @@ rescue SystemStackError
 end
 check "game aliasing Spriteset_Map#initialize / Table#[]= after Yami: no endless loop", ok
 
+# --- a failing tick hook: logged once, switched off after 100 frames ---
+logs = []
+Yami.singleton_class.send(:alias_method, :t_log, :log)
+Yami.define_singleton_method(:log) { |m| logs << m; t_log(m) }
+fails = 0; after = 0
+Yami.on_tick { fails += 1; nil.instance_variable_set(:@x, 1) }
+Yami.on_tick { after += 1 }
+120.times { Graphics.update }
+check "failing hook logged once, switched off after 100 failures", logs.count { |m| m.start_with?("tick hook: FrozenError") } == 1 && fails == 100 && logs.any? { |m| m.include?("switched off") }
+check "hooks after it keep running every frame", after == 120
+Yami.singleton_class.send(:alias_method, :log, :t_log)
+
 # --- load screen ---
 ls = PokemonLoad_Scene.new; ls.pbStartScene
 want = pano ? [0, 0, 512, 384] : [0, 0, ui_w, 384]

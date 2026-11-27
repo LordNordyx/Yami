@@ -74,6 +74,9 @@ module Yami
   @tick_hooks = []
   @once_hooks = []
   @frame_no = 0
+  @hook_fails = {}.compare_by_identity
+  @hook_errors = []
+  @hooks_off = []
 
   def on_tick(&b); @tick_hooks << b; end
   def once_pending; @once_hooks.size; end
@@ -81,10 +84,36 @@ module Yami
 
   def frame_no; @frame_no; end
 
+  # A failing hook must not cost every frame (an exception and a log line
+  # per frame is a stutter of its own): each distinct error is logged once,
+  # and a hook failing 100 frames in a row is switched off.
+  def tick_hook_failed(h, e)
+    n = (@hook_fails[h] = @hook_fails.fetch(h, 0) + 1)
+    key = "#{e.class}: #{e.message}"
+    unless @hook_errors.include?(key)
+      @hook_errors << key
+      where = (e.backtrace || []).find { |l| l.include?("yami_") } || (e.backtrace || [])[0]
+      log("tick hook: #{key} (#{where})")
+    end
+    return if n < 100
+    @hooks_off << h
+    @hook_fails.delete(h)
+    log("tick hook switched off after 100 failures in a row: #{key}")
+  end
+
   def tick
     @frame_no += 1
     @key_snap = nil # new frame: read the keyboard afresh
-    @tick_hooks.each { |h| h.call rescue log("tick hook: #{$!}") }
+    @tick_hooks.each do |h|
+      h.call
+      @hook_fails.delete(h) if @hook_fails.key?(h)
+    rescue StandardError => e
+      tick_hook_failed(h, e)
+    end
+    unless @hooks_off.empty?
+      @tick_hooks.reject! { |h| @hooks_off.include?(h) }
+      @hooks_off.clear
+    end
     run_once
   end
 
@@ -1035,7 +1064,10 @@ end
 
 # Native map renderer for Essentials (see Yami::NativeTilemap), unless disabled.
 unless Yami::CFG["native_tilemap"] == "false"
-  Yami.on_tick { @yami_ntm_done ||= (defined?(Yami::NativeTilemap) && Yami::NativeTilemap.install) }
+  # Locals, not @ivars: the engine evaluates preload scripts with self = nil,
+  # so a top-level `@x ||= ...` raised FrozenError on every frame.
+  ntm_done = false
+  Yami.on_tick { ntm_done ||= (defined?(Yami::NativeTilemap) && Yami::NativeTilemap.install) }
 end
 
 # =============================================================================
@@ -1301,8 +1333,9 @@ module Yami
 end
 
 unless Yami::CFG["native_tilemap"] == "false"
+  v20_done = false
   Yami.on_tick do
-    @yami_v20_done ||= begin
+    v20_done ||= begin
       if defined?(::TilemapRenderer)
         Yami::NativeTilemap.hook_table_edits if defined?(::Table)
         Yami::V20Maps.install

@@ -42,6 +42,9 @@ for v in plain modified; do
   ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/essentials_v21.rb" $v | grep -v '^\[yami' )
 done
 
+echo "== no top-level instance variables (self is nil in the engine)"
+ruby "$HERE/ruby/toplevel_ivars.rb"
+
 echo "== Ruby 1.8 compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/ruby18.rb" | grep -v '^\[yami' )
 
