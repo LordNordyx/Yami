@@ -728,10 +728,13 @@ module Yami
       INFRA_SECTION = /\A(?:Sprite_?Resizer)/i
 
       # :render, :map, :ui or :infra for a backtrace path
+      # (no path: code run from C, e.g. by the engine itself — never a game script)
       def section_kind(path)
+        return :infra unless path.is_a?(String) && !path.empty?
         (@section_kind ||= {})[path] ||= begin
-          name = File.basename(path.to_s).sub(/\A\[?\d+\]?[:\s]*/, "").sub(/\.rb\z/, "")
-          if path.to_s.include?("yami_") || path.start_with?("<internal") || name =~ INFRA_SECTION
+          path = path.scrub("?") unless path.valid_encoding? # names from Windows code pages
+          name = File.basename(path).sub(/\A\[?\d+\]?[:\s]*/, "").sub(/\.rb\z/, "")
+          if path.include?("yami_") || path.start_with?("<internal") || name =~ INFRA_SECTION
             :infra
           elsif name =~ RENDER_SECTION
             :render
@@ -786,6 +789,11 @@ module Yami
           return true if k == :render || (nearest && k == :map)
           nearest = false
         end
+        false
+      rescue StandardError => e
+        # Graphics.width must never take a game down: treat as UI
+        Yami.log("map_caller?: #{e.class}: #{e.message}") unless @mc_logged
+        @mc_logged = true
         false
       end
 

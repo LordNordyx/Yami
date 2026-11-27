@@ -201,6 +201,11 @@ else # essentials
   else
     check "Settings::SCREEN_WIDTH kept for UI", Settings::SCREEN_WIDTH == 512
     check "UI sees base width", Graphics.width == 512
+    check "frames without a path (run from C) are skipped, not a crash",
+          Yami::Wide.section_kind(nil) == :infra && Yami::Wide.section_kind("") == :infra
+    check "non-UTF-8 script names don't crash", Yami::Wide.section_kind("150:Pok\xE9mon_Map".b.force_encoding("UTF-8")) == :ui
+    check "real sections classified", Yami::Wide.section_kind("029:Spriteset_Map") == :render &&
+          Yami::Wide.section_kind("021:Game_Player") == :map && Yami::Wide.section_kind("120:Pause Menu") == :ui
     check "map code sees full width", Game_Map.new.update == 684
     check "map viewport full width", Spriteset_Map.new.vp.rect == [0, 0, 684, 384]
     check "UI viewport centered", Viewport.new(0, 0, 512, 384).rect == [86, 0, 512, 384]
