@@ -196,5 +196,25 @@ Graphics.update
 check "bordered request ignored: still #{ui_w}x384 for UI", [Graphics.width, Graphics.height] == [ui_w, 384] &&
       [Graphics.yami_native_width, Graphics.yami_native_height] == [wide, 384]
 check "no message boxes", $msgboxes == 0
+if ENV["YAMI_BENCH"]
+  $scene = Scene_Map.new rescue nil
+  sm = Spriteset_Map.new
+  n = 2000
+  GC.start; a0 = GC.stat(:total_allocated_objects)
+  t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  n.times { Graphics.update }
+  t = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+  hooks = Yami.instance_variable_get(:@tick_hooks)
+  hooks.each do |h|
+    t1 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    500.times { h.call rescue nil }
+    STDERR.puts format("BENCH hook %s: %.1f us", h.source_location.inspect, (Process.clock_gettime(Process::CLOCK_MONOTONIC) - t1) / 500 * 1e6)
+  end
+  STDERR.puts format("BENCH tick: %.1f us/frame, %d objs/frame", t / n * 1e6, (GC.stat(:total_allocated_objects) - a0) / n)
+  t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+  20000.times { Game_Player.new.center_x }
+  t = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+  STDERR.puts format("BENCH Graphics.width (map code): %.2f us/call", t / 20000 * 1e6)
+end
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
 exit($fails.zero? ? 0 : 1)

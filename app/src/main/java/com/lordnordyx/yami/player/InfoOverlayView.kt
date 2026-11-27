@@ -17,6 +17,8 @@ import java.util.Locale
 class InfoOverlayView(context: Context, private val accent: Int) : View(context) {
 
     var fps = 0
+    /** Longest frame of the last second (ms): a stutter shows up here. */
+    var worstMs = 0
     var turbo = false
     var showInfo = true
     /** Set once the engine reports its first frames; until then show a loading line. */
@@ -57,7 +59,7 @@ class InfoOverlayView(context: Context, private val accent: Int) : View(context)
         val y = pad + 34f
         if (showInfo) {
             val b = battery()
-            val line = "${fps.toString().padStart(2)} FPS  ${clock.format(Date())}  ${if (b >= 0) "$b%" else ""}"
+            val line = "${fps.toString().padStart(2)} FPS${if (worstMs > 0) " ·${worstMs.toString().padStart(3)} ms" else ""}  ${clock.format(Date())}  ${if (b >= 0) "$b%" else ""}"
             val w = paint.measureText(line)
             c.drawRoundRect(RectF(pad, pad, pad + w + 48f, pad + 48f), 14f, 14f, bg)
             c.drawText(line, x, y, paint)

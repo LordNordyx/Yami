@@ -148,10 +148,12 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         status = EngineStatus(File(repo.runtimeDir, "status-${g.id}.txt")) { m ->
             turboActive = m["turbo"] == "1"
             touch?.turboActive = turboActive
+            // Not only while the info overlay is shown
+            m["rate"]?.toFloatOrNull()?.let { matchDisplayRate(it) }
             info?.let { v ->
                 v.turbo = turboActive
                 v.fps = m["fps"]?.toIntOrNull() ?: v.fps
-                m["rate"]?.toFloatOrNull()?.let { matchDisplayRate(it) }
+                v.worstMs = m["worst"]?.toIntOrNull() ?: v.worstMs
                 if (m.containsKey("fps")) v.engineAlive = true
                 v.refresh()
             }

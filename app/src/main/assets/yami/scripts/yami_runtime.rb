@@ -381,6 +381,7 @@ module Yami
       dt = now - @last_frame_t
       target = 1.0 / [Graphics.frame_rate.to_i, 1].max
       h[:frames] += 1
+      @sec_worst = dt if dt > (@sec_worst || 0)
       if dt > target * 1.5
         h[:n] += 1
         h[:gc] += 1 if gc != @last_gc
@@ -404,6 +405,8 @@ module Yami
     @fps_frames += 1
     return if now - @fps_t < 1.0
     status("fps", (@fps_frames / (now - @fps_t)).round)
+    status("worst", ((@sec_worst || 0) * 1000).round)
+    @sec_worst = 0
     # the game's own logic rate (not turbo): the app matches the display to it
     status("rate", (Turbo.active && Turbo.base_rate) || Graphics.frame_rate)
     @fps_frames = 0
