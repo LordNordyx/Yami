@@ -141,6 +141,31 @@ tags = [0, 1, 2]
 ok = begin; $scene.tilemap.terrain_tags = tags; $scene.tilemap.terrain_tags.equal?(tags); rescue NoMethodError; false; end
 check "v18 terrain_tags accepted by the native renderer", ok
 
+# --- huge tileset (Myth_Outdoor is 256x26000): compact per-map tileset ---
+tm = $scene.tilemap.instance_variable_get(:@tilemap)
+raw = ->(m) { Tilemap.instance_method(m).bind(tm).call }
+$blts = []
+Bitmap.class_eval { define_method(:blt) { |*a| $blts << [a[0], a[1], a[3].to_a] } }
+big = Bitmap.new(256, 26000)
+md = Table.new(4, 4, 3)
+md[0, 0, 0] = 385; md[1, 0, 0] = 384 + 8 * 500 + 3; md[2, 0, 1] = 50
+pr = Table.new(384 + 8 * 813); pr[384 + 8 * 500 + 3] = 2; pr[50] = 1
+tm.tileset = big
+check "huge tileset not handed over before the map", raw.(:tileset).nil?
+tm.map_data = md; tm.priorities = pr
+cts = raw.(:tileset); cmd = raw.(:map_data); cpr = raw.(:priorities)
+check "engine gets a compact tileset (2 rows)", cts && cts.height == 64 && $blts.map(&:last) == [[0, 0, 256, 32], [0, 16000, 256, 32]]
+check "game still sees its own tileset/map/priorities", tm.tileset.equal?(big) && tm.map_data.equal?(md) && tm.priorities.equal?(pr)
+check "drawn map remapped (tiles, autotiles)", cmd[0, 0, 0] == 385 && cmd[1, 0, 0] == 384 + 8 + 3 && cmd[2, 0, 1] == 50
+check "priorities remapped", cpr[384 + 8 + 3] == 2 && cpr[50] == 1
+md[0, 1, 0] = 386
+check "runtime tile change mirrored", raw.(:map_data)[0, 1, 0] == 386
+md[3, 3, 0] = 384 + 8 * 700 + 1
+check "runtime change to a new tile row rebuilds", raw.(:tileset).height == 96 && raw.(:map_data)[3, 3, 0] == 384 + 16 + 1 && cts.disposed?
+small = Bitmap.new(256, 2000)
+tm.tileset = small
+check "normal tilesets handed over as they are", raw.(:tileset).equal?(small) && raw.(:map_data).equal?(md)
+
 # --- load screen ---
 ls = PokemonLoad_Scene.new; ls.pbStartScene
 want = pano ? [0, 0, 512, 384] : [0, 0, ui_w, 384]

@@ -722,11 +722,141 @@ Yami.on_tick { Yami::OldEss.tick }
 # the same map on the GPU — Kirin's "native map renderer". On by default;
 # "GPU map renderer" in the settings (native_tilemap=false) turns it off.
 module Yami::NativeTilemap
+  # Tilesets taller than this are never handed to the GPU tilemap: the engine
+  # takes its oversized-image path for them, which draws blank/black tiles on
+  # Android (Pokémon Myth: 256x26000). Kirin's "Optimize maps" fixes the same
+  # thing on disk; here each map gets, in memory, a compact tileset of just the
+  # tile rows it uses and a remapped copy of its data for drawing only.
+  COMPACT_ABOVE = 4096
+  WATCH = {}.compare_by_identity   # map_data Table -> renderer (runtime edits)
+
+  module TableEdits
+    def []=(*a)
+      r = super
+      if !WATCH.empty? && (tm = WATCH[self])
+        tm.yami_tile_set(a) rescue nil
+      end
+      r
+    end
+  end
+
+  module Compact
+    def tileset=(v); @yami_ts = v; yami_sync; end
+    def tileset; @yami_ts; end
+    def map_data=(v)
+      WATCH.delete(@yami_md) if @yami_md
+      @yami_md = v
+      yami_sync
+    end
+    def map_data; @yami_md; end
+    def priorities=(v); @yami_pr = v; yami_sync; end
+    def priorities; @yami_pr; end
+
+    def dispose
+      WATCH.delete(@yami_md) if @yami_md
+      yami_drop_compact
+      super
+    end
+
+    def yami_compact?; !!@yami_cts; end
+
+    # Runtime change to the map's own data: mirror it into the drawn copy.
+    def yami_tile_set(args)
+      return unless @yami_cmd && args.size == @yami_md_dims
+      v = args[-1]
+      if v >= 384 && !@yami_rows.key?((v - 384) >> 3)
+        @yami_key = nil
+        return yami_sync     # a tile row this map didn't use yet
+      end
+      @yami_cmd[*args[0..-2]] = yami_map_id(v)
+    end
+
+    private
+
+    def yami_map_id(id)
+      return id if id < 384
+      384 + (@yami_rows[(id - 384) >> 3] << 3) + ((id - 384) & 7)
+    end
+
+    def yami_raw(m, v)
+      ::Tilemap.instance_method(m).bind(self).call(v)
+    end
+
+    def yami_huge?(ts)
+      ts && !(ts.disposed? rescue true) && ts.height > COMPACT_ABOVE
+    end
+
+    def yami_drop_compact
+      @yami_cts.dispose if @yami_cts && !(@yami_cts.disposed? rescue true)
+      @yami_cts = @yami_cmd = @yami_rows = @yami_key = nil
+    end
+
+    def yami_sync
+      ts, md, pr = @yami_ts, @yami_md, @yami_pr
+      if yami_huge?(ts)
+        return unless md                     # wait for the map (no huge atlas)
+        key = [ts.object_id, md.object_id]
+        yami_build(ts, md) unless @yami_key == key && @yami_cts
+        yami_raw(:tileset=, @yami_cts)
+        yami_raw(:map_data=, @yami_cmd)
+        yami_raw(:priorities=, yami_priorities(pr)) if pr
+        WATCH[md] = self
+      else
+        yami_drop_compact
+        WATCH.delete(md) if md
+        yami_raw(:tileset=, ts) if ts
+        yami_raw(:map_data=, md) if md
+        yami_raw(:priorities=, pr) if pr
+      end
+    end
+
+    def yami_build(ts, md)
+      yami_drop_compact
+      xs, ys, zs = md.xsize, md.ysize, md.zsize
+      rows = {}
+      max_row = ts.height / 32
+      zs.times do |z| ys.times do |y| xs.times do |x|
+        id = md[x, y, z]
+        next if id.nil? || id < 384
+        r = (id - 384) >> 3
+        rows[r] = rows.size if r < max_row && !rows.key?(r)
+      end end end
+      cts = Bitmap.new(256, [rows.size, 1].max * 32)
+      rows.each { |old, nw| cts.blt(0, nw * 32, ts, Rect.new(0, old * 32, 256, 32)) }
+      @yami_rows = rows
+      cmd = Table.new(xs, ys, zs)
+      zs.times do |z| ys.times do |y| xs.times do |x|
+        id = md[x, y, z] || 0
+        cmd[x, y, z] = (id >= 384 && !rows.key?((id - 384) >> 3)) ? 0 : yami_map_id(id)
+      end end end
+      @yami_cts, @yami_cmd, @yami_key = cts, cmd, [ts.object_id, md.object_id]
+      @yami_md_dims = zs > 1 ? 4 : (ys > 1 ? 3 : 2)
+      @yami_cpr_src = nil
+      Yami.log("map renderer: compact tileset #{rows.size} rows (#{rows.size * 32}px of #{ts.height}px)")
+    end
+
+    def yami_priorities(pr)
+      return @yami_cpr if @yami_cpr_src.equal?(pr) && @yami_cpr
+      cpr = Table.new(384 + [@yami_rows.size, 1].max * 8)
+      n = [pr.xsize, 384].min
+      n.times { |i| cpr[i] = pr[i] }
+      @yami_rows.each do |old, nw|
+        8.times do |c|
+          src = 384 + (old << 3) + c
+          cpr[384 + (nw << 3) + c] = pr[src] if src < pr.xsize
+        end
+      end
+      @yami_cpr_src, @yami_cpr = pr, cpr
+      cpr
+    end
+  end
+
   # Essentials variants hand their tilemap extra properties (v18:
   # terrain_tags, others elsewhere). The engine Tilemap renders without them;
   # keep whatever is set so the scripts that read it back still work.
   def self.renderer
     @renderer ||= Class.new(::Tilemap) do
+      include Compact
       def method_missing(name, *args, &blk)
         n = name.to_s
         if n.end_with?("=") && args.size == 1
@@ -749,6 +879,7 @@ module Yami::NativeTilemap
     return true if @done
     return false unless Object.const_defined?(:TilemapLoader) && Object.const_defined?(:Tilemap)
     @done = true
+    ::Table.prepend(TableEdits) unless ::Table < TableEdits
     unless TilemapLoader.method_defined?(:setClass) && TilemapLoader.method_defined?(:updateClass)
       Yami.log("native map renderer: unfamiliar TilemapLoader, left as is")
       return true
