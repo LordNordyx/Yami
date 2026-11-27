@@ -69,10 +69,18 @@ object EngineConfig {
         })
 
         val rgss = if (s.rgssVersionOverride in 1..3) s.rgssVersionOverride else game.rgssVersion
-        // RPG Maker XP runs at 40 fps, but games made for mkxp-z (they ship an
-        // mkxp.json, e.g. Pokémon Essentials v18+ such as Pokémon Myth) set 60.
-        val gameRate = if (rgss != 1 || shipsMkxpJson(gameDir)) 60f else 40f
-        val vsync = s.vsync && displayPacesEvenly(context, gameRate)
+        // RPG Maker XP games run at 40 fps; VX/VX Ace at 60. Games made for
+        // mkxp-z may pick either at run time (Pokémon Myth sets 60, then its
+        // own compatibility script sets 40 again), so vsync must suit both.
+        // With vsync on a screen that can't pace the rate evenly (40 fps on
+        // 60 Hz), frames alternate one/two refreshes and any late frame waits
+        // a whole extra one: 40 drops to 35-36 with visible hitches.
+        val rates = when {
+            rgss != 1 -> listOf(60f)
+            shipsMkxpJson(gameDir) -> listOf(40f, 60f)
+            else -> listOf(40f)
+        }
+        val vsync = s.vsync && rates.all { displayPacesEvenly(context, it) }
         writeMkxpJson(gameDir, buildOverrides(game, s.copy(vsync = vsync), app, runtime, cfg, optimizeMode))
         return Prepared(gameDir, dataDir, cfg)
     }
