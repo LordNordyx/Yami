@@ -811,9 +811,15 @@ module Yami::NativeTilemap
   COMPACT_ABOVE = 4096
   WATCH = {}.compare_by_identity   # map_data Table -> renderer (runtime edits)
 
-  module TableEdits
-    def []=(*a)
-      r = super
+  # Runtime map edits mirrored into the drawn copy. A captured original, not
+  # prepend: a game script aliasing Table#[]= afterwards would otherwise
+  # recurse forever (prepend + alias).
+  def self.hook_table_edits
+    return if ::Table.instance_variable_get(:@yami_edits)
+    ::Table.instance_variable_set(:@yami_edits, true)
+    orig = ::Table.instance_method(:[]=)
+    ::Table.send(:define_method, :[]=) do |*a|
+      r = orig.bind_call(self, *a)
       if !WATCH.empty? && (tm = WATCH[self])
         tm.yami_tile_set(a) rescue nil
       end
@@ -1003,7 +1009,7 @@ module Yami::NativeTilemap
     return true if @done
     return false unless Object.const_defined?(:TilemapLoader) && Object.const_defined?(:Tilemap)
     @done = true
-    ::Table.prepend(TableEdits) unless ::Table < TableEdits
+    hook_table_edits
     unless TilemapLoader.method_defined?(:setClass) && TilemapLoader.method_defined?(:updateClass)
       Yami.log("native map renderer: unfamiliar TilemapLoader, left as is")
       return true
@@ -1696,16 +1702,5 @@ unless Yami.cfg("mode") == "optimize"
   Yami.on_tick { $yami_boot_frames += 1 }
   Yami.once_when(-> { $yami_boot_frames >= 180 }) { Yami::MapCache.start }
 end
-# Frame profile: map setup and map sprites (Essentials loads connected maps
-# while you walk)
-Yami.once_when(-> { defined?(Game_Map) && defined?(Spriteset_Map) }) do
-  [[Game_Map, :setup, :map_setup], [Spriteset_Map, :initialize, :map_sprites]].each do |klass, m, key|
-    next unless klass.method_defined?(m) || klass.private_method_defined?(m)
-    klass.prepend(Module.new do
-      define_method(m) { |*a, &b| Yami::Prof.measure(key) { super(*a, &b) } }
-    end)
-  end
-end
-
 Yami.status("turbo", 0)
 Yami.log("runtime #{Yami::VERSION} ready (rgss #{Yami.rgss}, widescreen=#{Yami::Wide.mode})")

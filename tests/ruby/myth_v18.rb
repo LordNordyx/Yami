@@ -166,6 +166,26 @@ small = Bitmap.new(256, 2000)
 tm.tileset = small
 check "normal tilesets handed over as they are", raw.(:tileset).equal?(small) && raw.(:map_data).equal?(md)
 
+# --- game scripts wrapping methods after Yami (Anil's Sprite_DynamicShadows) ---
+section("072:Sprite_DynamicShadows", <<~RB)
+  class Spriteset_Map
+    alias shadow_initialize initialize
+    def initialize(*a); shadow_initialize(*a); @shadows = true; end
+  end
+  class Table
+    alias shadow_set []=
+    def []=(*a); shadow_set(*a); end
+  end
+RB
+ok = begin
+  sm2 = Spriteset_Map.new
+  t2 = Table.new(2, 2, 1); t2[1, 1, 0] = 5
+  sm2.instance_variable_get(:@shadows) && t2[1, 1, 0] == 5
+rescue SystemStackError
+  false
+end
+check "game aliasing Spriteset_Map#initialize / Table#[]= after Yami: no endless loop", ok
+
 # --- load screen ---
 ls = PokemonLoad_Scene.new; ls.pbStartScene
 want = pano ? [0, 0, 512, 384] : [0, 0, ui_w, 384]
