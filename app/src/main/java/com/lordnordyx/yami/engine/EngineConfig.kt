@@ -63,6 +63,7 @@ object EngineConfig {
             appendLine("optimized_maps=${s.optimizedMaps}")
             appendLine("warm_graphics=${s.warmGraphics}")
             appendLine("native_tilemap=${s.gpuMaps}")
+            appendLine("force_60=${s.force60}")
             appendLine("redirect_saves=${s.redirectSaves && !game.inPlace}")
             appendLine("save_dir=${dataDir.absolutePath}")
             appendLine("status_file=${File(runtime.dir, "status-${game.id}.txt").absolutePath}")
@@ -76,7 +77,7 @@ object EngineConfig {
         // 60 Hz), frames alternate one/two refreshes and any late frame waits
         // a whole extra one: 40 drops to 35-36 with visible hitches.
         val rates = when {
-            rgss != 1 -> listOf(60f)
+            rgss != 1 || s.force60 -> listOf(60f)
             shipsMkxpJson(gameDir) -> listOf(40f, 60f)
             else -> listOf(40f)
         }

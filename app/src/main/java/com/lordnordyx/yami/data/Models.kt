@@ -86,6 +86,8 @@ data class GameSettings(
     val gpuMaps: Boolean = true,
     /** Decode character graphics ahead of time (no hitch when a sprite appears). */
     val graphicsCache: Boolean = true,
+    /** Run RPG Maker XP games (40 fps) at 60 fps, like Kirin's option. */
+    val force60: Boolean = false,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,

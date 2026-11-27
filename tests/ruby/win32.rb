@@ -145,6 +145,19 @@ check "lookups follow the current folder", File.read("graphics/pictures/title.pn
 File.binwrite("Graphics/Pictures/New.png", "N")
 check "file created after a cached miss is found", File.exist?("graphics/pictures/new.png")
 check "File.open with block returns block value", File.open("Graphics/Pictures/title.png", "rb") { |f| f.read } == "T"
+# --- existence answers are remembered (no storage trip per query) ---
+5.times { File.exist?("Graphics/Pictures/missing_thing.png"); FileTest.exist?("Graphics/Pictures/missing_thing.png") }
+memo = Yami::WinFS.instance_variable_get(:@answers)
+check "repeated existence queries answered from memory", memo[:exist?] && memo[:exist?].key?("Graphics/Pictures/missing_thing.png")
+check "remembered miss stays a miss", !File.exist?("Graphics/Pictures/missing_thing.png")
+File.binwrite("Graphics/Pictures/missing_thing.png", "M")
+check "remembered miss cleared by a write", File.exist?("Graphics/Pictures/missing_thing.png") && FileTest.exist?("Graphics/Pictures/missing_thing.png")
+File.delete("Graphics/Pictures/missing_thing.png")
+check "remembered hit cleared by a delete", !File.exist?("Graphics/Pictures/missing_thing.png")
+File.open("Graphics/Pictures/fresh.png", "wb") { |f| f.write("F") }
+check "file written through File.open is seen", File.file?("graphics/pictures/fresh.png") && File.size?("Graphics/Pictures/fresh.png") == 1
+Dir.mkdir("Graphics/Pictures/sub")
+check "mkdir clears answers", File.directory?("Graphics/Pictures/sub")
 check "MiniFFI alias", MiniFFI == Win32API
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")

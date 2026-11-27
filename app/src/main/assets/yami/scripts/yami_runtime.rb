@@ -352,7 +352,12 @@ end
 class << Graphics
   alias_method :yami_set_frame_rate, :frame_rate=
   # Games that change the frame rate while turbo is on keep their new base rate.
+  # "60 FPS" setting (like Kirin's): games asking for less run at 60 (RPG
+  # Maker XP's 40). Essentials scales movement by Graphics.frame_rate, so it
+  # walks at the right speed and looks smoother; animations counted in frames
+  # play faster.
   def frame_rate=(v)
+    v = 60 if Yami.flag("force_60") && v.to_i < 60
     if Yami::Turbo.active
       Yami::Turbo.base_rate = v
       return yami_set_frame_rate(v * (Yami.num("turbo_speed", 3).to_i.clamp(2, 10)))
@@ -361,6 +366,10 @@ class << Graphics
   end
 
   def yami_disable_turbo!; Yami::Turbo.disable!; end
+  if Yami.flag("force_60")
+    Graphics.frame_rate = 60
+    Yami.log("frame rate: forced to 60 fps")
+  end
   def kirin_disable_turbo!; Yami::Turbo.disable!; end
 end
 
@@ -1343,7 +1352,7 @@ if Yami::Wide.on?
           @map_vps << vp unless @map_vps.any? { |v| v.equal?(vp) }
         when :ui_full
           Yami::Wide::Curtains.track(vp)
-          @ui_full << [vp, []] unless @ui_full.any? { |v, _| v.equal?(vp) }
+          @ui_full << [vp, {}.compare_by_identity] unless @ui_full.any? { |v, _| v.equal?(vp) }
         end
       end
 
@@ -1353,7 +1362,7 @@ if Yami::Wide.on?
       def adopt(child, vp)
         return unless vp
         e = @ui_full.find { |v, _| v.equal?(vp) }
-        e[1] << child if e && !e[1].any? { |c| c.equal?(child) }
+        e[1][child] = true if e
       end
 
       def alive?(o); !(o.disposed? rescue true); end
@@ -1361,8 +1370,8 @@ if Yami::Wide.on?
       # an opaque picture covering (most of) the box: a full-screen scene
       def covering?(vp, kids)
         bw, bh = Yami::Wide.base
-        kids.reject! { |c| !alive?(c) }
-        kids.any? do |c|
+        kids.reject! { |c, _| !alive?(c) }
+        kids.each_key.any? do |c|
           next false unless (c.visible rescue false)
           b = (c.bitmap rescue nil)
           next false unless b && !(b.disposed? rescue true)

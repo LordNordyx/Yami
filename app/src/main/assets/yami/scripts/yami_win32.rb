@@ -370,8 +370,23 @@ module Yami
       s.include?("\\") ? s.tr("\\", "/") : s
     end
 
-    def flush; @cache.clear; @resolved.clear; end
+    def flush; @cache.clear; @resolved.clear; @answers.clear; end
     @resolved = {}
+
+    # Answers to existence queries (exist?, file?, directory?, ...) per
+    # path. Games ask these constantly - Essentials probes several
+    # extensions per image, some scripts every frame - and each one was a
+    # trip through Android's shared-storage layer (~0.1-1 ms). Game files
+    # don't change on their own; every write, delete, rename, mkdir and
+    # chdir made through Ruby clears the answers.
+    MEMO = %i[exist? file? directory? readable? size? zero?].freeze
+    @answers = {}
+    def answer(m, path)
+      h = (@answers[m] ||= {})
+      return h[path] if h.key?(path)
+      @answers.clear if h.size > 20_000
+      (@answers[m] ||= {})[path] = yield
+    end
 
     # dir -> [exact names, downcased -> real name]; one directory read each
     def listing(dir)
@@ -428,7 +443,8 @@ module Yami
     end
 
     def dir_as_file!(path)
-      raise Yami::DirAsFileError, "Is a directory - #{path}" if path.is_a?(String) && !path.empty? && ORIG[:dir].call(path)
+      return unless path.is_a?(String) && !path.empty?
+      raise Yami::DirAsFileError, "Is a directory - #{path}" if answer(:directory?, path) { ORIG[:dir].call(path) }
     end
 
     def writes?(mode)
@@ -469,9 +485,14 @@ module Yami
     end
     QUERIES.each do |m|
       next unless File.respond_to?(m)
+      memo = Yami::WinFS::MEMO.include?(m)
       define_method(m) do |*a, **k, &b|
         a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
-        k.empty? ? super(*a, &b) : super(*a, **k, &b)
+        if memo && a.size == 1 && k.empty? && !b && a[0].is_a?(String)
+          Yami::WinFS.answer(m, a[0]) { super(*a) }
+        else
+          k.empty? ? super(*a, &b) : super(*a, **k, &b)
+        end
       end
     end
     WRITES.each do |m|
@@ -492,7 +513,15 @@ module Yami
 
   module WinFileTest
     %i[exist? file? directory? size size? zero? readable?].each do |m|
-      define_method(m) { |f, *a| super(Yami::WinFS.resolve(f), *a) }
+      memo = Yami::WinFS::MEMO.include?(m)
+      define_method(m) do |f, *a|
+        r = Yami::WinFS.resolve(f)
+        if memo && a.empty? && r.is_a?(String)
+          Yami::WinFS.answer(m, r) { super(r) }
+        else
+          super(r, *a)
+        end
+      end
     end
   end
 
