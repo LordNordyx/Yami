@@ -1039,6 +1039,281 @@ unless Yami::CFG["native_tilemap"] == "false"
 end
 
 # =============================================================================
+#  GPU map renderer for Pokémon Essentials v20+ (TilemapRenderer)
+# =============================================================================
+# v20+ draws maps with one Ruby sprite per tile and walks all of them every
+# frame (~900 in 16:9, plus repositioning and re-sorting while scrolling):
+# the main cost of walking around. Kirin replaces it with a native renderer;
+# here TilemapRenderer.new hands out a subclass that keeps the game's
+# interface but draws each loaded map ($map_factory.maps) with one engine
+# Tilemap. Same depth rules as v21: priorities, bridges (bridge tiles drop to
+# the ground while on a bridge), reflective tiles below reflections (-100).
+# Left alone when a plugin changed TilemapRenderer, the game uses extra
+# autotiles or zoom, or native_tilemap=false.
+module Yami
+  module V20Maps
+    module_function
+
+    def eligible?
+      return @eligible unless @eligible.nil?
+      @eligible = begin
+        why = nil
+        if !defined?(::TilemapRenderer) || !defined?(::Game_Map) || !defined?(::GameData::TerrainTag)
+          why = "not Essentials v20+"
+        elsif ::TilemapRenderer::ZOOM_X != 1 || ::TilemapRenderer::ZOOM_Y != 1
+          why = "map zoom"
+        elsif !::TilemapRenderer::EXTRA_AUTOTILES.empty?
+          why = "extra autotiles"
+        else
+          files = %i[initialize update refresh_tile refresh_tile_bitmap refresh_tile_z check_if_screen_moved].map do |m|
+            ::TilemapRenderer.instance_method(m).source_location&.first rescue :missing
+          end
+          why = "TilemapRenderer changed by a script" if files.uniq.size != 1 || files.include?(:missing)
+        end
+        if why
+          Yami.log("GPU map renderer (v20+): not used (#{why})")
+          false
+        else
+          Yami.log("GPU map renderer (v20+): Essentials' TilemapRenderer drawn by the engine")
+          true
+        end
+      rescue StandardError => e
+        Yami.log("GPU map renderer (v20+): not used (#{e.class}: #{e.message})")
+        false
+      end
+    end
+
+    def install
+      return true if @installed
+      return false unless defined?(::TilemapRenderer) && defined?(::Scene_Map)
+      @installed = true
+      klass = renderer_class
+      ::TilemapRenderer.singleton_class.send(:define_method, :new) do |*a, &b|
+        if equal?(::TilemapRenderer) && Yami::V20Maps.eligible?
+          klass.new(*a, &b)
+        else
+          super(*a, &b)
+        end
+      end
+      true
+    end
+
+    # Copies of a map's data split by reflective tiles: [others, reflective].
+    def split(data, refl_ids)
+      xs, ys, zs = data.xsize, data.ysize, data.zsize
+      main = Table.new(xs, ys, zs)
+      refl = Table.new(xs, ys, zs)
+      if data.respond_to?(:_dump) && ::Table.respond_to?(:_load)
+        bin = data._dump(-1)
+        hdr = bin.byteslice(0, 20)
+        ids = bin.byteslice(20, bin.bytesize - 20).unpack("s<*")
+        top = [ids.max.to_i, 0].max
+        lm = Array.new(top + 1) { |i| refl_ids[i] ? 0 : i }
+        lr = Array.new(top + 1) { |i| refl_ids[i] ? i : 0 }
+        ids.map! { |i| i < 0 ? 0 : i }
+        om = []; orf = []
+        ids.each_slice(8192) { |sl| om.concat(lm.values_at(*sl)); orf.concat(lr.values_at(*sl)) }
+        return [::Table._load(hdr + om.pack("s<*")), ::Table._load(hdr + orf.pack("s<*"))]
+      end
+      zs.times { |z| ys.times { |y| xs.times { |x|
+        id = data[x, y, z].to_i
+        if refl_ids[id] then refl[x, y, z] = id else main[x, y, z] = id end
+      } } }
+      [main, refl]
+    end
+
+    def renderer_class
+      @renderer_class ||= Class.new(::TilemapRenderer) do
+        def initialize(viewport)
+          @tilesets  = ::TilemapRenderer::TilesetBitmaps.new
+          @autotiles = ::TilemapRenderer::AutotileBitmaps.new
+          @tone      = Tone.new(0, 0, 0, 0)
+          @color     = Color.new(0, 0, 0, 0)
+          @last_tone = Tone.new(0, 0, 0, 0)
+          @last_color = Color.new(0, 0, 0, 0)
+          @self_viewport = Viewport.new(0, 0, Graphics.width, Graphics.height)
+          @viewport  = viewport || @self_viewport
+          @ox = @oy = 0
+          @visible = true
+          @disposed = false
+          @yami_ts = {}     # filename => [bitmap, count] (original images)
+          @yami_at = {}
+          @yami_maps = {}   # map_id => entry
+        end
+
+        def dispose
+          return if @disposed
+          @yami_maps.each_value { |e| yami_drop(e) }
+          @yami_maps.clear
+          (@yami_ts.values + @yami_at.values).each { |b, _| b.dispose if b && !b.disposed? }
+          @yami_ts.clear
+          @yami_at.clear
+          @self_viewport.dispose
+          @self_viewport = nil
+          @disposed = true
+        end
+
+        def disposed?; @disposed; end
+
+        def add_tileset(filename); yami_add(@yami_ts, filename) { pbGetTileset(filename) }; end
+        def remove_tileset(filename); yami_remove(@yami_ts, filename); end
+        def add_autotile(filename); yami_add(@yami_at, filename) { pbGetAutotile(filename) }; end
+        def remove_autotile(filename); yami_remove(@yami_at, filename); end
+        def add_extra_autotiles(_id); end
+        def remove_extra_autotiles(_id); end
+        def refresh; @yami_refresh = true; end
+
+        def update
+          return if @disposed
+          tone_changed = @last_tone != @tone
+          color_changed = @last_color != @color
+          @last_tone = @tone.clone if tone_changed
+          @last_color = @color.clone if color_changed
+          bridge = ($PokemonGlobal.bridge rescue 0).to_i > 0
+          live = {}
+          $map_factory.maps.each do |map|
+            id = map.map_id
+            e = @yami_maps[id]
+            if e.nil? || @yami_refresh || !e[:map].equal?(map) || !e[:data].equal?(map.data) ||
+               e[:tileset] != map.tileset_name || e[:autotiles] != map.autotile_names
+              yami_drop(e) if e
+              e = @yami_maps[id] = yami_build(map)
+              tone_changed = color_changed = true
+              e[:bridge] = nil
+            end
+            live[id] = true
+            ox = (map.display_x.to_f / Game_Map::X_SUBPIXELS).round
+            oy = (map.display_y.to_f / Game_Map::Y_SUBPIXELS).round
+            if e[:bridge] != bridge
+              e[:bridge] = bridge
+              e[:main].priorities = bridge ? e[:prio_bridge] : e[:prio]
+            end
+            e[:tilemaps].each do |tm|
+              tm.ox = ox
+              tm.oy = oy
+              tm.tone = @tone if tone_changed
+              tm.color = @color if color_changed
+              tm.update
+            end
+          end
+          @yami_maps.keys.each do |id|
+            next if live[id]
+            yami_drop(@yami_maps.delete(id))
+          end
+          @yami_refresh = false
+        end
+
+        # runtime edits of the map's own data, mirrored into the split copies
+        def yami_tile_set(args)
+          @yami_maps.each_value do |e|
+            next unless e[:split]
+            v = args[-1]
+            idx = args[0..-2]
+            if e[:refl_ids][v]
+              e[:main_data][*idx] = 0
+              e[:refl_data][*idx] = v
+            else
+              e[:main_data][*idx] = v
+              e[:refl_data][*idx] = 0
+            end
+          end
+        end
+
+        private
+
+        def yami_add(store, filename)
+          return if filename.nil? || filename.empty?
+          if (e = store[filename])
+            e[1] += 1
+          else
+            store[filename] = [yield, 1]
+          end
+        end
+
+        def yami_remove(store, filename)
+          return if filename.nil? || filename.empty? || !store[filename]
+          e = store[filename]
+          e[1] -= 1
+          return if e[1] > 0
+          store.delete(filename)
+          e[0].dispose if e[0] && !e[0].disposed?
+        end
+
+        def yami_tilemap(map, data, prio)
+          tm = Yami::NativeTilemap.renderer.new(@viewport)
+          tm.tileset = @yami_ts[map.tileset_name]&.first
+          map.autotile_names.each_with_index do |name, i|
+            next if name.nil? || name.empty? || i > 6
+            bmp = @yami_at[name]&.first
+            tm.autotiles[i] = bmp if bmp
+          end
+          tm.map_data = data
+          tm.priorities = prio
+          tm
+        end
+
+        def yami_build(map)
+          prio = map.priorities
+          tags = map.terrain_tags
+          n = prio.xsize
+          refl_ids = {}
+          bridge_ids = []
+          n.times do |i|
+            t = tags ? tags[i].to_i : 0
+            next if t == 0
+            d = GameData::TerrainTag.try_get(t)
+            next unless d
+            refl_ids[i] = true if i >= 48 && d.shows_reflections
+            bridge_ids << i if d.bridge
+          end
+          prio_bridge = prio
+          unless bridge_ids.empty?
+            prio_bridge = prio.clone
+            bridge_ids.each { |i| prio_bridge[i] = 0 }
+          end
+          e = { map: map, data: map.data, tileset: map.tileset_name, autotiles: map.autotile_names.dup,
+                prio: prio, prio_bridge: prio_bridge, refl_ids: refl_ids }
+          if refl_ids.empty?
+            e[:main] = yami_tilemap(map, map.data, prio)
+            e[:tilemaps] = [e[:main]]
+          else
+            main_data, refl_data = Yami::V20Maps.split(map.data, refl_ids)
+            refl_prio = prio.clone
+            refl_ids.each_key { |i| refl_prio[i] = 0 if i < refl_prio.xsize }
+            e[:main] = yami_tilemap(map, main_data, prio)
+            refl = yami_tilemap(map, refl_data, refl_prio)
+            refl.yami_ground_z = -100 if refl.respond_to?(:yami_ground_z=)
+            e.merge!(split: true, main_data: main_data, refl_data: refl_data)
+            e[:tilemaps] = [refl, e[:main]]
+            Yami::NativeTilemap::WATCH[map.data] = self
+          end
+          e
+        end
+
+        def yami_drop(e)
+          return unless e
+          Yami::NativeTilemap::WATCH.delete(e[:data]) if e[:split]
+          e[:tilemaps].each { |tm| tm.dispose unless tm.disposed? }
+        end
+      end
+    end
+  end
+end
+
+unless Yami::CFG["native_tilemap"] == "false"
+  Yami.on_tick do
+    @yami_v20_done ||= begin
+      if defined?(::TilemapRenderer)
+        Yami::NativeTilemap.hook_table_edits if defined?(::Table)
+        Yami::V20Maps.install
+      else
+        false
+      end
+    end
+  end
+end
+
+# =============================================================================
 #  Widescreen
 # =============================================================================
 module Yami

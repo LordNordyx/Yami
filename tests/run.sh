@@ -37,6 +37,11 @@ for m in auto panoramic full off; do for b in border0 border1; do
   ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/myth_v18.rb" $m $b | grep -v '^\[yami' )
 done; done
 
+for v in plain modified; do
+  echo "== Essentials v20/v21 map renderer: $v"
+  ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/essentials_v21.rb" $v | grep -v '^\[yami' )
+done
+
 echo "== Ruby 1.8 compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/ruby18.rb" | grep -v '^\[yami' )
 

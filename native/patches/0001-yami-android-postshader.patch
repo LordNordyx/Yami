@@ -278,6 +278,36 @@ index 770514a..6b80ebe 100644
    _rb_define_method(klass, "xsize", tableXSize);
    _rb_define_method(klass, "ysize", tableYSize);
    _rb_define_method(klass, "zsize", tableZSize);
+diff --git a/binding/tilemap-binding.cpp b/binding/tilemap-binding.cpp
+index 8180c5b..6af451d 100644
+--- a/binding/tilemap-binding.cpp
++++ b/binding/tilemap-binding.cpp
+@@ -165,6 +165,17 @@ DEF_GFX_PROP_I(Tilemap, OY)
+ DEF_GFX_PROP_I(Tilemap, Opacity)
+ DEF_GFX_PROP_I(Tilemap, BlendType)
+ 
++/* [yami] Tilemap#yami_ground_z = z (ground layer depth) */
++RB_METHOD(tilemapYamiSetGroundZ) {
++    RB_UNUSED_PARAM;
++    int z;
++    rb_get_args(argc, argv, "i", &z RB_ARG_END);
++    Tilemap *t = getPrivateData<Tilemap>(self);
++    if (t)
++        t->yamiSetGroundZ(z);
++    return INT2NUM(z);
++}
++
+ void tilemapBindingInit() {
+     VALUE klass = rb_define_class("TilemapAutotiles", rb_cObject);
+ #if RAPI_FULL > 187
+@@ -188,6 +199,7 @@ void tilemapBindingInit() {
+     _rb_define_method(klass, "update", tilemapUpdate);
+     
+     _rb_define_method(klass, "viewport", tilemapGetViewport);
++    _rb_define_method(klass, "yami_ground_z=", tilemapYamiSetGroundZ);
+     
+     INIT_PROP_BIND(Tilemap, Tileset, "tileset");
+     INIT_PROP_BIND(Tilemap, MapData, "map_data");
 diff --git a/binding/viewport-binding.cpp b/binding/viewport-binding.cpp
 index f1c754b..0c851b9 100644
 --- a/binding/viewport-binding.cpp
@@ -1108,7 +1138,7 @@ index ac5ab55..85fb498 100644
  	void drawMovieFrame(const THEORAPLAY_VideoFrame* video, Bitmap *videoBitmap);
  	bool updateMovieInput(Movie *movie);
 diff --git a/src/display/tilemap.cpp b/src/display/tilemap.cpp
-index bef8746..351ed85 100644
+index bef8746..9530715 100644
 --- a/src/display/tilemap.cpp
 +++ b/src/display/tilemap.cpp
 @@ -67,8 +67,12 @@ static const int atAreaW = autotileW * atFrames;
@@ -1173,6 +1203,33 @@ index bef8746..351ed85 100644
  		if (ox + maxX >= mapW)
  			maxX = mapW - ox - 1;
  		if (oy + maxY >= mapH)
+@@ -1429,3 +1446,11 @@ void Tilemap::releaseResources()
+ 	delete p;
+ 	atProxy.p = 0;
+ }
++
++
++void Tilemap::yamiSetGroundZ(int z)
++{
++	guardDisposed();
++
++	p->elem.ground->setZ(z);
++}
+diff --git a/src/display/tilemap.h b/src/display/tilemap.h
+index 313075a..82e1cce 100644
+--- a/src/display/tilemap.h
++++ b/src/display/tilemap.h
+@@ -76,6 +76,10 @@ public:
+ 
+ 	void initDynAttribs();
+ 
++	/* Yami: depth of the ground layer (upstream: always 0). Essentials v20+
++	 * draws reflective tiles at -100, below water reflections (-50). */
++	void yamiSetGroundZ(int z);
++
+ private:
+ 	TilemapPrivate *p;
+ 	Autotiles atProxy;
 diff --git a/src/display/viewport.cpp b/src/display/viewport.cpp
 index 29b3219..7a224b7 100644
 --- a/src/display/viewport.cpp
