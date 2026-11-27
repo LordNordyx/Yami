@@ -30,11 +30,11 @@ class QuickMenuView(
     private val dp = resources.displayMetrics.density
 
     init {
-        setBackgroundColor(0xCC000000.toInt())
+        setBackgroundColor(0xE6000000.toInt())   // the dark closes in
         isClickable = true
         setOnClickListener { onAction(Action.RESUME) }
         val panel = ScrollView(context).apply {
-            background = GradientDrawable().apply { setColor(0xF00E0E12.toInt()); cornerRadius = 18 * dp; setStroke((1 * dp).toInt(), 0x33FFFFFF) }
+            background = GradientDrawable().apply { setColor(0xFF0D0D12.toInt()); cornerRadius = 24 * dp; setStroke((1 * dp).toInt(), 0xFF1E1E28.toInt()) }
             setPadding((8 * dp).toInt(), (8 * dp).toInt(), (8 * dp).toInt(), (8 * dp).toInt())
             addView(list)
             isClickable = true
@@ -46,8 +46,9 @@ class QuickMenuView(
         list.removeAllViews()
         items.clear()
         list.addView(TextView(context).apply {
-            text = s.title.ifBlank { "Yami" }
-            setTextColor(0x99FFFFFF.toInt()); textSize = 13f; typeface = Typeface.MONOSPACE
+            text = s.title.ifBlank { "Yami" }.uppercase()
+            setTextColor(0xFF8C8B99.toInt()); textSize = 11f; letterSpacing = 0.16f
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
         })
         add(Action.RESUME, "▶  Resume")
@@ -69,7 +70,7 @@ class QuickMenuView(
     private fun add(a: Action, label: String) {
         val tv = TextView(context).apply {
             text = label
-            setTextColor(0xFFFFFFFF.toInt()); textSize = 16f; typeface = Typeface.MONOSPACE
+            setTextColor(0xFFECEAF2.toInt()); textSize = 16f; typeface = Typeface.create("sans-serif", Typeface.NORMAL)
             setPadding((14 * dp).toInt(), (12 * dp).toInt(), (14 * dp).toInt(), (12 * dp).toInt())
             setOnClickListener { onAction(a) }
         }
@@ -79,7 +80,12 @@ class QuickMenuView(
 
     private fun highlight() {
         items.forEachIndexed { i, (_, tv) ->
-            tv.background = if (i == selected) GradientDrawable().apply { setColor(accent); alpha = 90; cornerRadius = 10 * dp } else null
+            val on = i == selected
+            tv.background = if (on) GradientDrawable().apply {
+                setColor((accent and 0x00FFFFFF) or 0x24000000); cornerRadius = 14 * dp
+                setStroke((1 * dp).toInt(), (accent and 0x00FFFFFF) or 0x66000000)
+            } else null
+            tv.setTextColor(if (on) accent else 0xFFECEAF2.toInt())
         }
     }
 

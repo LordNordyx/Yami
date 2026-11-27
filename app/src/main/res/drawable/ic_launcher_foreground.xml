@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Yami: an eclipse. A black moon over a thin corona, one bead of light. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- corona glow -->
+    <path android:pathData="M20,54 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="54" android:centerY="54" android:gradientRadius="34"
+                android:startColor="#558B6CFF" android:endColor="#008B6CFF" />
+        </aapt:attr>
+    </path>
+    <!-- the moon: pure black over the glow -->
+    <path android:fillColor="#FF000000" android:pathData="M36,52 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0z" />
+    <!-- the ring: a disc with the moon cut out, thin where the light breaks through -->
+    <path android:fillColor="#FF8B6CFF" android:fillType="evenOdd"
+        android:pathData="M30,54 a24,24 0 1,0 48,0 a24,24 0 1,0 -48,0z M36,52 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0z" />
+    <!-- the bead -->
+    <path android:fillColor="#FFFFFFFF" android:pathData="M68.77,37.03 a2.2,2.2 0 1,0 4.4,0 a2.2,2.2 0 1,0 -4.4,0z" />
+</vector>

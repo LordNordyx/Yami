@@ -40,7 +40,10 @@ import com.lordnordyx.yami.ui.LibraryViewModel
 import com.lordnordyx.yami.ui.Section
 import com.lordnordyx.yami.ui.SliderRow
 import com.lordnordyx.yami.ui.SwitchRow
-import com.lordnordyx.yami.ui.theme.Mono
+import com.lordnordyx.yami.ui.YamiTopBar
+import com.lordnordyx.yami.ui.theme.Dark
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.navigationBarsPadding
 
 private val REMAPPABLE = listOf(
     RgssButton.C, RgssButton.B, RgssButton.A, RgssButton.X, RgssButton.Y, RgssButton.Z,
@@ -62,8 +65,10 @@ fun ControlsScreen(vm: LibraryViewModel, back: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
+    Column(Modifier.fillMaxSize().background(Dark.Void)) {
+    YamiTopBar("Controls", back)
     Column(
-        Modifier.fillMaxSize().padding(top = 32.dp).focusRequester(focus).focusable()
+        Modifier.fillMaxSize().navigationBarsPadding().focusRequester(focus).focusable()
             .onPreviewKeyEvent { ke ->
                 val e = ke.nativeKeyEvent
                 if (!ControllerMapper.isController(e.device, e.source) || e.action != KeyEvent.ACTION_DOWN) return@onPreviewKeyEvent false
@@ -80,11 +85,6 @@ fun ControlsScreen(vm: LibraryViewModel, back: () -> Unit) {
             }
             .verticalScroll(rememberScrollState()),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(8.dp)) {
-            IconButton(back) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
-            Text("Controls", style = MaterialTheme.typography.headlineMedium)
-        }
-
         capture?.let { b ->
             Section("Binding") {
                 ActionRow("Press the controller button for ${b.label}", "Tap here to cancel") { capture = null }
@@ -94,7 +94,8 @@ fun ControlsScreen(vm: LibraryViewModel, back: () -> Unit) {
         Section("Controllers") {
             if (pads.isEmpty()) ActionRow("No controller connected", "Bluetooth and USB pads are bound automatically when they connect")
             pads.forEach { p -> ActionRow(p.name, "Detected layout: ${p.profile.label}") }
-            Text(lastInput, fontFamily = Mono, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(16.dp))
+            Text(lastInput, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp))
         }
 
         Section("Button mapping") {
@@ -134,5 +135,5 @@ fun ControlsScreen(vm: LibraryViewModel, back: () -> Unit) {
         }
         Spacer(Modifier.height(48.dp))
     }
-
+    }
 }

@@ -1,6 +1,5 @@
 package com.lordnordyx.yami.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -14,33 +13,92 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.lordnordyx.yami.ui.LibraryViewModel
 
+/*
+ * Yami — the god of darkness. Pure black, surfaces barely lifted off it,
+ * hairlines instead of shadows, one accent of light.
+ */
+object Dark {
+    val Void = Color(0xFF000000)       // background: AMOLED black
+    val Abyss = Color(0xFF07070A)      // faintest lift (bars, sheets)
+    val Shade = Color(0xFF0D0D12)      // cards
+    val Dusk = Color(0xFF15151C)       // pressed / raised
+    val Hairline = Color(0xFF1E1E28)   // borders, dividers
+    val Ink = Color(0xFFECEAF2)        // primary text
+    val Mist = Color(0xFF8C8B99)       // secondary text
+    val Faint = Color(0xFF4F4E5A)      // tertiary text, inactive controls
+    val Danger = Color(0xFFFF4D5E)
+}
+
+/** Accents, named for the dark. The first is the default. */
+data class Accent(val name: String, val argb: Long)
+
+val ACCENTS = listOf(
+    Accent("Eclipse", 0xFF8B6CFF),
+    Accent("Blood Moon", 0xFFE5394F),
+    Accent("Abyss", 0xFF2BD9C2),
+    Accent("Ember", 0xFFFF7A3D),
+    Accent("Moonlight", 0xFFB8C4FF),
+    Accent("Ash", 0xFFE8E8EC),
+)
+
+/** Kept for code that shows paths or numbers in a fixed-width face. */
 val Mono = FontFamily.Monospace
+private val Sans = FontFamily.SansSerif
 
 @Composable
 fun YamiTheme(vm: LibraryViewModel, content: @Composable () -> Unit) {
     val s by vm.settings.collectAsState()
     val accent = Color(s.accent)
-    val bg = if (s.amoled) Color.Black else Color(0xFF0E0E12)
     val scheme = darkColorScheme(
         primary = accent,
-        onPrimary = Color.White,
-        secondary = Color(0xFF38E1C5),
-        background = bg,
-        surface = bg,
-        surfaceVariant = Color(0xFF16161C),
-        surfaceContainer = Color(0xFF111116),
-        surfaceContainerHigh = Color(0xFF18181F),
-        onBackground = Color(0xFFEDEDF2),
-        onSurface = Color(0xFFEDEDF2),
-        onSurfaceVariant = Color(0xFF9A9AA8),
-        outline = Color(0xFF2A2A33),
+        onPrimary = Dark.Void,
+        primaryContainer = accent.copy(alpha = 0.16f),
+        onPrimaryContainer = accent,
+        secondary = accent,
+        onSecondary = Dark.Void,
+        secondaryContainer = Dark.Dusk,
+        onSecondaryContainer = Dark.Ink,
+        tertiary = accent,
+        background = Dark.Void,
+        onBackground = Dark.Ink,
+        surface = Dark.Void,
+        onSurface = Dark.Ink,
+        surfaceVariant = Dark.Shade,
+        onSurfaceVariant = Dark.Mist,
+        surfaceContainerLowest = Dark.Void,
+        surfaceContainerLow = Dark.Abyss,
+        surfaceContainer = Dark.Shade,
+        surfaceContainerHigh = Dark.Dusk,
+        surfaceContainerHighest = Dark.Dusk,
+        surfaceBright = Dark.Dusk,
+        surfaceDim = Dark.Void,
+        inverseSurface = Dark.Ink,
+        inverseOnSurface = Dark.Void,
+        outline = Dark.Hairline,
+        outlineVariant = Dark.Hairline,
+        error = Dark.Danger,
+        onError = Dark.Void,
+        scrim = Color(0xE6000000),
     )
     val base = Typography()
-    val type = base.copy(
-        headlineLarge = base.headlineLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-1).sp),
-        titleLarge = base.titleLarge.copy(fontWeight = FontWeight.Bold),
-        labelSmall = TextStyle(fontFamily = Mono, fontSize = 11.sp, letterSpacing = 0.5.sp),
+    fun TextStyle.sans() = copy(fontFamily = Sans)
+    val type = Typography(
+        displayLarge = base.displayLarge.sans(),
+        displayMedium = base.displayMedium.sans(),
+        displaySmall = base.displaySmall.sans(),
+        headlineLarge = base.headlineLarge.sans().copy(fontWeight = FontWeight.Light, letterSpacing = 0.sp),
+        headlineMedium = base.headlineMedium.sans().copy(fontWeight = FontWeight.Light),
+        headlineSmall = base.headlineSmall.sans().copy(fontWeight = FontWeight.Normal),
+        titleLarge = base.titleLarge.sans().copy(fontWeight = FontWeight.Medium),
+        titleMedium = base.titleMedium.sans().copy(fontWeight = FontWeight.Medium),
+        titleSmall = base.titleSmall.sans().copy(fontWeight = FontWeight.Medium),
+        bodyLarge = base.bodyLarge.sans().copy(fontSize = 16.sp, letterSpacing = 0.1.sp),
+        bodyMedium = base.bodyMedium.sans(),
+        bodySmall = base.bodySmall.sans().copy(lineHeight = 17.sp),
+        labelLarge = base.labelLarge.sans().copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp),
+        labelMedium = base.labelMedium.sans(),
+        // section labels: small, wide-tracked capitals
+        labelSmall = TextStyle(fontFamily = Sans, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp),
     )
-    @Suppress("UNUSED_VARIABLE") val dark = isSystemInDarkTheme()
     MaterialTheme(colorScheme = scheme, typography = type, content = content)
 }
