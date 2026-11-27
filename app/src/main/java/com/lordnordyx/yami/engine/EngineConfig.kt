@@ -62,6 +62,7 @@ object EngineConfig {
             appendLine("map_cache_mb=${s.mapCacheMb}")
             appendLine("optimized_maps=${s.optimizedMaps}")
             appendLine("warm_graphics=${s.warmGraphics}")
+            appendLine("native_tilemap=${s.gpuMaps}")
             appendLine("redirect_saves=${s.redirectSaves && !game.inPlace}")
             appendLine("save_dir=${dataDir.absolutePath}")
             appendLine("status_file=${File(runtime.dir, "status-${game.id}.txt").absolutePath}")
@@ -129,6 +130,10 @@ object EngineConfig {
         p("frameSkip", s.frameSkip)
         p("displayFPS", s.showEngineFps)
         p("pathCache", true)
+        // Games made on Windows (e.g. Pokémon Myth) enable subImageFix for buggy
+        // desktop drivers. With huge tilesets it routes the GPU tilemap through
+        // an oversized shared texture, which left ground tiles blank on device.
+        p("subImageFix", false)
         // Yami tells map code from UI by script section name ("NNN:Name").
         p("useScriptNames", true)
         p("enableSettings", false) // F1 desktop menu is useless on touch; Yami has its own

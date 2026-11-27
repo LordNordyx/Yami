@@ -82,6 +82,8 @@ data class GameSettings(
     /** Experimental: rewrites tileset ids per map; opt-in only. */
     val optimizedMaps: Boolean = false,
     val warmGraphics: Boolean = false,
+    /** Draw maps with the engine's GPU tilemap instead of the game's Ruby one. */
+    val gpuMaps: Boolean = true,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,

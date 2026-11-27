@@ -136,10 +136,7 @@ pic = Spriteset_Global.pictures
 check "picture layer is UI (game rect #{pano ? 'in the UI layer' : ''})",
       pic.native_rect == (pano ? [0, 0, 512, 384] : [0, 0, wide, 384]) && (pano ? !pic.yami_unclipped : true)
 $scene = Spriteset_Map.new
-check "game's own map renderer by default", $scene.tilemap.renderer == CustomTilemap
-Yami::NativeTilemap.install   # opt-in (native_tilemap=true)
-$scene = Spriteset_Map.new
-check "opt-in native map renderer (engine Tilemap)", $scene.tilemap.renderer <= Tilemap
+check "GPU map renderer (engine Tilemap) by default", $scene.tilemap.renderer <= Tilemap
 tags = [0, 1, 2]
 ok = begin; $scene.tilemap.terrain_tags = tags; $scene.tilemap.terrain_tags.equal?(tags); rescue NoMethodError; false; end
 check "v18 terrain_tags accepted by the native renderer", ok
