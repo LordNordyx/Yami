@@ -717,11 +717,10 @@ end
 Yami.on_tick { Yami::OldEss.tick }
 
 # --- native map renderer -----------------------------------------------------
-# Essentials draws maps with a Ruby tilemap (CustomTilemap) by default: many
-# sprites updated in Ruby every frame. The engine's own Tilemap draws the
-# same RGSS map on the GPU (any width, so also the 16:9 map) — what Kirin
-# calls its native map renderer. Essentials' TilemapLoader already supports
-# it; make it the choice. Off with native_tilemap=false.
+# Essentials draws maps with a Ruby tilemap (CustomTilemap). The engine's own
+# Tilemap draws RGSS maps on the GPU, but it left ground tiles of Pokémon Myth
+# white on device, so the game's renderer stays the default; opt in with
+# native_tilemap=true.
 module Yami::NativeTilemap
   # Essentials variants hand their tilemap extra properties (v18:
   # terrain_tags, others elsewhere). The engine Tilemap renders without them;
@@ -774,7 +773,7 @@ module Yami::NativeTilemap
 end
 
 # Native map renderer for Essentials (see Yami::NativeTilemap), unless disabled.
-unless Yami::CFG["native_tilemap"] == "false"
+if Yami::CFG["native_tilemap"] == "true"
   Yami.on_tick { @yami_ntm_done ||= (defined?(Yami::NativeTilemap) && Yami::NativeTilemap.install) }
 end
 
