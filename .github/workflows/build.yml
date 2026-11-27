@@ -98,7 +98,21 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.14.3
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.YAMI_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/yami.jks"
+            echo "YAMI_KEYSTORE_FILE=$RUNNER_TEMP/yami.jks" >> "$GITHUB_ENV"
+            echo "Signing with the repository key"
+          else
+            echo "::warning::YAMI_KEYSTORE_B64 secret not set — signing with a throwaway debug key (updates won't install over older builds)"
+          fi
+
       - name: Assemble
+        env:
+          YAMI_KEYSTORE_PASSWORD: ${{ secrets.YAMI_KEYSTORE_PASSWORD }}
         run: gradle :app:assembleDebug :app:assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:

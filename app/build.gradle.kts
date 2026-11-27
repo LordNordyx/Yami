@@ -18,12 +18,26 @@ android {
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
+    // Stable signing so updates install over the previous version. CI writes the
+    // keystore from the YAMI_KEYSTORE_B64 secret; without it, builds use the debug key.
+    val ksFile = System.getenv("YAMI_KEYSTORE_FILE")?.let { file(it) }?.takeIf { it.exists() }
+    signingConfigs {
+        if (ksFile != null) create("yami") {
+            storeFile = ksFile
+            storePassword = System.getenv("YAMI_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("YAMI_KEY_ALIAS") ?: "yami"
+            keyPassword = System.getenv("YAMI_KEY_PASSWORD") ?: System.getenv("YAMI_KEYSTORE_PASSWORD")
+        }
+    }
+
     buildTypes {
+        debug {
+            if (ksFile != null) signingConfig = signingConfigs.getByName("yami")
+        }
         release {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Debug-signed so CI artifacts install directly; replace with your keystore.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName(if (ksFile != null) "yami" else "debug")
         }
     }
 
