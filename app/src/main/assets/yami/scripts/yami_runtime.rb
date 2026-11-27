@@ -723,13 +723,49 @@ Yami.on_tick { Yami::OldEss.tick }
 # calls its native map renderer. Essentials' TilemapLoader already supports
 # it; make it the choice. Off with native_tilemap=false.
 module Yami::NativeTilemap
+  # Essentials variants hand their tilemap extra properties (v18:
+  # terrain_tags, others elsewhere). The engine Tilemap renders without them;
+  # keep whatever is set so the scripts that read it back still work.
+  def self.renderer
+    @renderer ||= Class.new(::Tilemap) do
+      def method_missing(name, *args, &blk)
+        n = name.to_s
+        if n.end_with?("=") && args.size == 1
+          (@yami_extra ||= {})[n.chomp("=")] = args[0]
+        elsif args.empty? && !blk && n =~ /\A[a-z_]\w*\z/
+          (@yami_extra ||= {})[n]
+        else
+          super
+        end
+      end
+
+      def respond_to_missing?(name, priv = false)
+        n = name.to_s
+        n.end_with?("=") || (@yami_extra && @yami_extra.key?(n)) || super
+      end
+    end
+  end
+
   def self.install
     return true if @done
     return false unless Object.const_defined?(:TilemapLoader) && Object.const_defined?(:Tilemap)
     @done = true
+    unless TilemapLoader.method_defined?(:setClass) && TilemapLoader.method_defined?(:updateClass)
+      Yami.log("native map renderer: unfamiliar TilemapLoader, left as is")
+      return true
+    end
     TilemapLoader.class_eval do
+      alias_method :yami_game_updateClass, :updateClass
       def updateClass
-        setClass(::Tilemap)
+        return yami_game_updateClass if @yami_native_failed
+        begin
+          setClass(Yami::NativeTilemap.renderer)
+        rescue StandardError => e
+          @yami_native_failed = true
+          Yami.log("native map renderer failed (#{e.class}: #{e.message}); using the game's")
+          @tilemap = nil if @tilemap && @tilemap.class == Yami::NativeTilemap.renderer && (@tilemap.disposed? rescue true)
+          yami_game_updateClass
+        end
       end
     end
     Yami.log("native map renderer: Essentials' TilemapLoader uses the engine Tilemap")

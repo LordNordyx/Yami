@@ -74,6 +74,8 @@ begin
       def updateClass; setClass(CustomTilemap); end
       def setClass(cls); @tilemap = cls.new(@viewport); end
       def renderer; @tilemap.class; end
+      def terrain_tags=(v); @tilemap.terrain_tags = v; end   # v18 forwards this
+      def terrain_tags; @tilemap.terrain_tags; end
     end
   RB
   section("241:PScreen_Options", v18.(File.read(File.join(FIX, "PokemonSystem.rb"))))
@@ -134,7 +136,10 @@ pic = Spriteset_Global.pictures
 check "picture layer is UI (game rect #{pano ? 'in the UI layer' : ''})",
       pic.native_rect == (pano ? [0, 0, 512, 384] : [0, 0, wide, 384]) && (pano ? !pic.yami_unclipped : true)
 $scene = Spriteset_Map.new
-check "native map renderer (engine Tilemap) chosen", $scene.tilemap.renderer == Tilemap
+check "native map renderer (engine Tilemap) chosen", $scene.tilemap.renderer <= Tilemap
+tags = [0, 1, 2]
+ok = begin; $scene.tilemap.terrain_tags = tags; $scene.tilemap.terrain_tags.equal?(tags); rescue NoMethodError; false; end
+check "v18 terrain_tags accepted by the native renderer", ok
 
 # --- load screen ---
 ls = PokemonLoad_Scene.new; ls.pbStartScene
