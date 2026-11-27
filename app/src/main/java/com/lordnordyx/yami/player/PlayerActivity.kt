@@ -56,6 +56,13 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     private lateinit var repo: GameRepository
     private var game: Game? = null
     private lateinit var settings: GameSettings
+
+    // quick-menu switches, passed to the runtime through the control file
+    private var instantText = false
+    private var minimap = false
+    private var cheats = QuickMenuView.Cheats(0, noEncounters = false, noclip = false)
+    private var moneySeq = 0
+    private var healSeq = 0
     private lateinit var inputConfig: InputConfig
     private var optimizeMode = false
 
@@ -92,6 +99,9 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         CrashReports.beginSession(this, g.id, g.title)
         settings = repo.effectiveSettings(g)
         inputConfig = InputConfig.load(this)
+        instantText = settings.instantText
+        minimap = settings.minimap
+        writeControl()
 
         if (!optimizeMode) runCatching { SaveManager(this, repo).snapshot(g) }
         val prepared = try {
@@ -290,19 +300,45 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     }
 
     // ----------------------------------------------------------------- menu
+    private fun menuState() = QuickMenuView.State(
+        turbo = turboActive,
+        touchVisible = touch?.visibility == View.VISIBLE,
+        info = info?.showInfo == true,
+        title = game?.title ?: "",
+        instantText = instantText,
+        minimap = minimap,
+    )
+
     private fun toggleMenu() {
         val m = menu ?: return
         if (m.visibility == View.VISIBLE) {
             m.visibility = View.GONE
         } else {
             injector.releaseAll()
-            m.show(QuickMenuView.State(
-                turbo = turboActive,
-                touchVisible = touch?.visibility == View.VISIBLE,
-                info = info?.showInfo == true,
-                title = game?.title ?: "",
-            ))
+            m.show(menuState())
         }
+    }
+
+    /** Switches for the runtime: read by Yami::Features a few times a second. */
+    private fun writeControl() {
+        val g = game ?: return
+        runCatching {
+            EngineConfig.controlFile(repo.runtimeDir, g.id).writeText(buildString {
+                appendLine("instant_text=$instantText")
+                appendLine("minimap=$minimap")
+                appendLine("shiny=${cheats.shiny}")
+                appendLine("no_encounters=${cheats.noEncounters}")
+                appendLine("noclip=${cheats.noclip}")
+                appendLine("money_seq=$moneySeq")
+                appendLine("heal_seq=$healSeq")
+            })
+        }
+    }
+
+    private fun cheat(focus: QuickMenuView.Action, change: () -> Unit) {
+        change()
+        writeControl()
+        menu?.showCheats(cheats, focus)
     }
 
     private fun onMenuAction(a: QuickMenuView.Action) {
@@ -322,6 +358,21 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             QuickMenuView.Action.SOFT_RESET -> injector.tap(RgssButton.RESET)
             QuickMenuView.Action.RESTART -> restart()
             QuickMenuView.Action.QUIT -> quitToLibrary()
+            QuickMenuView.Action.INSTANT_TEXT -> { instantText = !instantText; writeControl() }
+            QuickMenuView.Action.MINIMAP -> { minimap = !minimap; writeControl() }
+            QuickMenuView.Action.CHEATS -> menu?.showCheats(cheats)
+            QuickMenuView.Action.CHEAT_SHINY -> cheat(a) { cheats = cheats.copy(shiny = (cheats.shiny + 1) % QuickMenuView.SHINY_LABELS.size) }
+            QuickMenuView.Action.CHEAT_ENCOUNTERS -> cheat(a) { cheats = cheats.copy(noEncounters = !cheats.noEncounters) }
+            QuickMenuView.Action.CHEAT_NOCLIP -> cheat(a) { cheats = cheats.copy(noclip = !cheats.noclip) }
+            QuickMenuView.Action.CHEAT_MONEY -> cheat(a) {
+                moneySeq++
+                Toast.makeText(this, "Money set to the game's maximum", Toast.LENGTH_SHORT).show()
+            }
+            QuickMenuView.Action.CHEAT_HEAL -> cheat(a) {
+                healSeq++
+                Toast.makeText(this, "Party healed", Toast.LENGTH_SHORT).show()
+            }
+            QuickMenuView.Action.BACK -> menu?.show(menuState())
         }
     }
 

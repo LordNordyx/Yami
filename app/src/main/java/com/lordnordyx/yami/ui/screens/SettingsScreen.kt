@@ -52,6 +52,7 @@ import com.lordnordyx.yami.ui.SectionNote
 import com.lordnordyx.yami.ui.SwitchRow
 import com.lordnordyx.yami.ui.Wordmark
 import com.lordnordyx.yami.ui.YamiPage
+import com.lordnordyx.yami.ui.focusRing
 import com.lordnordyx.yami.ui.theme.ACCENTS
 import com.lordnordyx.yami.ui.theme.Dark
 import kotlinx.coroutines.launch
@@ -115,7 +116,7 @@ fun AppearanceScreen(vm: LibraryViewModel, back: () -> Unit) {
         Section("Accent") {
             ACCENTS.forEach { a ->
                 val sel = a.argb == s.accent
-                Row(Modifier.fillMaxWidth().clickable { vm.updateApp { it.copy(accent = a.argb) } }.padding(horizontal = 18.dp, vertical = 12.dp),
+                Row(Modifier.fillMaxWidth().focusRing(RoundedCornerShape(14.dp)).clickable { vm.updateApp { it.copy(accent = a.argb) } }.padding(horizontal = 18.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(28.dp).clip(CircleShape).background(Color(a.argb))
                         .then(if (sel) Modifier.border(2.dp, Dark.Ink, CircleShape) else Modifier))

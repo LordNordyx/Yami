@@ -21,6 +21,9 @@ import java.io.File
  *  - yami.cfg, read by the Ruby runtime layer (widescreen, turbo, map cache…)
  */
 object EngineConfig {
+    /** Written by the player screen (quick-menu switches), read by the runtime. */
+    fun controlFile(runtimeDir: File, gameId: String) = File(runtimeDir, "control-$gameId.txt")
+
 
     const val MARKER = "_yami"
     const val TURBO_SCANCODE = 67 // SDL_SCANCODE_F10
@@ -64,6 +67,10 @@ object EngineConfig {
             appendLine("warm_graphics=${s.warmGraphics}")
             appendLine("native_tilemap=${s.gpuMaps}")
             appendLine("force_60=${s.force60}")
+            appendLine("instant_text=${s.instantText}")
+            appendLine("minimap=${s.minimap}")
+            appendLine("menu_sides=${s.menuSides.name.lowercase()}")
+            appendLine("control_file=${controlFile(runtime.dir, game.id).absolutePath}")
             appendLine("redirect_saves=${s.redirectSaves && !game.inPlace}")
             appendLine("save_dir=${dataDir.absolutePath}")
             appendLine("status_file=${File(runtime.dir, "status-${game.id}.txt").absolutePath}")

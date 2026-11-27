@@ -1728,7 +1728,9 @@ if Yami::Wide.on?
   # instead of black bars ("ambient"); over the map (pause menu, dialogue) the
   # sides show the map.
   module Yami::Wide::Layers
-    AMBIENT_DIM = 45 # percent
+    # Sides of 4:3 menus on a wide screen: the menu's own art blurred, dimmed
+    # further, or pure black (AMOLED). Setting "menu_sides".
+    AMBIENT_DIM = { "art" => 45, "dim" => 80, "black" => 100 }.fetch(Yami.cfg("menu_sides", "art"), 45)
     @map_vps = []
     @ui_full = []   # [viewport, [children]]
     @state = nil
@@ -2012,5 +2014,356 @@ unless Yami.cfg("mode") == "optimize"
   Yami.on_tick { $yami_boot_frames += 1 }
   Yami.once_when(-> { $yami_boot_frames >= 180 }) { Yami::MapCache.start }
 end
+# =============================================================================
+#  Player features: instant text, cheats, minimap
+# =============================================================================
+# The player screen writes a small control file (key=value lines) whenever a
+# quick-menu switch changes; read a few times a second with IO.read (outside
+# the game's Windows file layer). The launch settings are the defaults.
+module Yami
+  module Features
+    STATE = {
+      "instant_text" => Yami.flag("instant_text"),
+      "minimap" => Yami.flag("minimap"),
+      "shiny" => 0,            # 0 game's odds, 1: 1/512, 2: 1/64, 3: 1/8, 4: always
+      "no_encounters" => false,
+      "noclip" => false,
+    }
+    SHINY_ODDS = [nil, 512, 64, 8, 1].freeze
+    @seq = {}
+    @raw = nil
+    @next = 0
+
+    module_function
+
+    def on?(k); STATE[k] ? true : false; end
+    def shiny_odds; SHINY_ODDS[STATE["shiny"].to_i]; end
+
+    def poll
+      return if (@next -= 1) > 0
+      @next = 10
+      path = Yami.cfg("control_file")
+      return unless path
+      raw = (IO.read(path) rescue nil)
+      return if raw.nil? || raw == @raw
+      @raw = raw
+      raw.each_line do |l|
+        k, v = l.strip.split("=", 2)
+        next unless k && v
+        if k.end_with?("_seq")                      # one-shot actions
+          act = k.chomp("_seq")
+          old = @seq[act]
+          @seq[act] = v
+          run(act) if old && old != v
+        elsif STATE.key?(k)
+          STATE[k] = v =~ /\A\d+\z/ ? v.to_i : v == "true"
+        end
+      end
+      apply
+    rescue StandardError => e
+      Yami.log("features: #{e.class}: #{e.message}")
+    end
+
+    # ---------------------------------------------------------- persistent cheats
+    def apply
+      Cheats.install
+      if defined?($game_system) && $game_system.respond_to?(:encounter_disabled=)
+        if on?("no_encounters")
+          unless @enc_set
+            @enc_was = $game_system.encounter_disabled   # may be nil
+            @enc_set = true
+          end
+          $game_system.encounter_disabled = true
+        elsif @enc_set
+          $game_system.encounter_disabled = @enc_was
+          @enc_set = false
+        end
+      end
+    end
+
+    def tick
+      poll
+      if $game_player && $game_player.respond_to?(:through=)
+        if on?("noclip")
+          unless @through_set
+            @through_was = $game_player.through
+            @through_set = true
+          end
+          $game_player.through = true
+        elsif @through_set
+          $game_player.through = @through_was
+          @through_set = false
+        end
+      end
+    end
+
+    # ---------------------------------------------------------- one-shot actions
+    def trainer
+      return $player if defined?($player) && $player
+      return $Trainer if defined?($Trainer) && $Trainer
+      nil
+    end
+
+    def run(act)
+      case act
+      when "money"
+        t = trainer
+        if t && t.respond_to?(:money=)
+          t.money = 999_999_999                      # the game's setter caps it at its maximum
+          Yami.log("cheat: money #{t.money}")
+        elsif defined?($game_party) && $game_party.respond_to?(:gain_gold)
+          $game_party.gain_gold(9_999_999)
+          Yami.log("cheat: gold")
+        end
+      when "heal"
+        t = trainer
+        if t && t.respond_to?(:party)
+          t.party.each { |pk| pk.heal if pk && pk.respond_to?(:heal) }
+          Yami.log("cheat: party healed")
+        elsif defined?($game_party) && $game_party.respond_to?(:actors)
+          $game_party.actors.each { |a| a.recover_all if a.respond_to?(:recover_all) }
+          Yami.log("cheat: party healed")
+        end
+      end
+    rescue StandardError => e
+      Yami.log("cheat #{act}: #{e.class}: #{e.message}")
+    end
+  end
+
+  # Cheats that need the game's classes: wrapped once the scripts have
+  # loaded (captured originals, not prepend).
+  module Cheats
+    module_function
+
+    def install
+      return if @done
+      return unless defined?($scene) && $scene
+      @done = true
+      shiny
+      encounters
+    end
+
+    # Shininess decided once, when a Pokémon is created, at the chosen odds:
+    # Pokémon you already have stay as they are (Essentials up to v18 works
+    # shininess out from the ID on every check).
+    def shiny
+      klass, var = if defined?(::PokeBattle_Pokemon) then [::PokeBattle_Pokemon, :@shinyflag]
+                   elsif defined?(::Pokemon) && ::Pokemon.method_defined?(:shiny?) then [::Pokemon, :@shiny]
+                   end
+      return unless klass
+      orig = klass.instance_method(:initialize)
+      klass.send(:define_method, :initialize) do |*a, &b|
+        r = orig.bind_call(self, *a, &b)
+        odds = Yami::Features.shiny_odds
+        instance_variable_set(var, true) if odds && rand(odds).zero?
+        r
+      end
+      Yami.log("cheats: shiny odds on #{klass}")
+    end
+
+    # Essentials' own encounter checks (encounter_disabled covers the rest)
+    def encounters
+      [[:PokemonEncounters, :encounter_triggered?], [:PokemonEncounters, :isEncounterPossibleHere?]].each do |c, m|
+        next unless Object.const_defined?(c)
+        k = Object.const_get(c)
+        next unless k.method_defined?(m)
+        orig = k.instance_method(m)
+        k.send(:define_method, m) do |*a, &b|
+          Yami::Features.on?("no_encounters") ? false : orig.bind_call(self, *a, &b)
+        end
+      end
+    end
+  end
+
+  # Dialogue at once: while a message is typing out, skip ahead each frame,
+  # exactly as pressing the confirm button does (pauses inside a message and
+  # the wait for the button still work). Essentials' message window.
+  module InstantText
+    module_function
+
+    def install
+      return true if @done
+      return false unless defined?($scene) && $scene
+      @done = true
+      return true unless defined?(::Window_AdvancedTextPokemon)
+      k = ::Window_AdvancedTextPokemon
+      return true unless k.method_defined?(:skipAhead) && k.method_defined?(:busy?)
+      orig = k.instance_method(:update)
+      k.send(:define_method, :update) do |*a, &b|
+        r = orig.bind_call(self, *a, &b)
+        if Yami::Features.on?("instant_text") && busy? && !(respond_to?(:pausing?) && pausing?) &&
+           !(respond_to?(:letterbyletter) && !letterbyletter)
+          skipAhead rescue nil
+        end
+        r
+      end
+      Yami.log("instant text: Essentials message window")
+      true
+    end
+  end
+
+  # A small map of the current area in the top-right corner: walkable
+  # ground, water, grass, the player.
+  module Minimap
+    MAX = 132          # longest side on screen, px
+    ROWS_PER_FRAME = 24
+    module_function
+
+    def screen_w
+      Graphics.respond_to?(:yami_native_width) ? Graphics.yami_native_width : Graphics.width
+    end
+
+    def visible_now?
+      return false unless Yami::Features.on?("minimap")
+      return false unless defined?(::Scene_Map) && $scene.is_a?(::Scene_Map) && $game_map && $game_player
+      if defined?(Yami::Wide::Layers) && Yami::Wide.panoramic?
+        return Yami::Wide::Layers.map_shown_cached? rescue true
+      end
+      true
+    end
+
+    def tick
+      unless visible_now?
+        @sprite.visible = false if @sprite && !@sprite.disposed?
+        @dot.visible = false if @dot && !@dot.disposed?
+        return
+      end
+      build_start if @map_id != $game_map.map_id || @data_id != $game_map.data.object_id
+      build_rows if @building
+      show
+    rescue StandardError => e
+      Yami.log("minimap: #{e.class}: #{e.message}") unless @logged
+      @logged = true
+    end
+
+    def viewport
+      if @vp.nil? || @vp.disposed?
+        @vp = Viewport.new(0, 0, screen_w, Graphics.respond_to?(:yami_native_height) ? Graphics.yami_native_height : Graphics.height)
+        @vp.z = 90_000
+        @vp.yami_unclipped = true if @vp.respond_to?(:yami_unclipped=)
+        @vp.instance_variable_set(:@yami_overlay, true)
+      end
+      @vp
+    end
+
+    def build_start
+      m = $game_map
+      @map_id = m.map_id
+      @data_id = m.data.object_id
+      @w = m.width
+      @h = m.height
+      @scale = [[MAX / [@w, @h].max, 1].max, 4].min
+      @pix = "\0".b * (@w * @h * 4)
+      @row = 0
+      @building = true
+      neutral = (defined?(::PBTerrain) && ::PBTerrain.const_defined?(:Neutral)) ? ::PBTerrain::Neutral : nil
+      @neutral = neutral
+    end
+
+    WALK = [44, 44, 56, 230].pack("C4")
+    WALL = [0, 0, 0, 150].pack("C4")
+    WATER = [36, 70, 130, 235].pack("C4")
+    GRASS = [36, 78, 52, 235].pack("C4")
+
+    def kind(tag)
+      return nil if tag.nil? || tag == 0
+      if defined?(::GameData::TerrainTag)
+        d = ::GameData::TerrainTag.try_get(tag)
+        return :water if d && d.respond_to?(:can_surf) && d.can_surf
+        return :grass if d && d.respond_to?(:land_wild_encounters) && d.land_wild_encounters
+      elsif defined?(::PBTerrain)
+        return :water if ::PBTerrain.respond_to?(:isSurfable?) && ::PBTerrain.isSurfable?(tag)
+        return :grass if ::PBTerrain.respond_to?(:isGrass?) && ::PBTerrain.isGrass?(tag)
+      end
+      nil
+    rescue StandardError
+      nil
+    end
+
+    def build_rows
+      m = $game_map
+      data = m.data
+      pas = m.passages
+      pri = m.priorities
+      tags = m.terrain_tags
+      stop = [@row + ROWS_PER_FRAME, @h].min
+      (@row...stop).each do |y|
+        @w.times do |x|
+          walk = true
+          look = nil
+          2.downto(0) do |z|
+            id = data[x, y, z]
+            next if id.nil? || id == 0
+            t = tags ? tags[id] : 0
+            next if @neutral && t == @neutral
+            look ||= kind(t)
+            if (pas[id] & 0x0f) == 0x0f
+              walk = false
+              break
+            end
+            break if pri[id] == 0
+          end
+          c = !walk ? (look == :water ? WATER : WALL) : (look == :water ? WATER : look == :grass ? GRASS : WALK)
+          @pix[(y * @w + x) * 4, 4] = c
+        end
+      end
+      @row = stop
+      finish if @row >= @h
+    end
+
+    def finish
+      @building = false
+      @bmp.dispose if @bmp && !@bmp.disposed?
+      @bmp = Bitmap.new(@w, @h)
+      if @bmp.respond_to?(:raw_data=)
+        @bmp.raw_data = @pix
+      else
+        @h.times do |y|                              # runs of one colour per call
+          x = 0
+          while x < @w
+            c = @pix[(y * @w + x) * 4, 4]
+            x2 = x
+            x2 += 1 while x2 + 1 < @w && @pix[(y * @w + x2 + 1) * 4, 4] == c
+            r, g, b, a = c.unpack("C4")
+            @bmp.fill_rect(x, y, x2 - x + 1, 1, Color.new(r, g, b, a))
+            x = x2 + 1
+          end
+        end
+      end
+      @sprite ||= Sprite.new(viewport)
+      @sprite.bitmap = @bmp
+      @sprite.zoom_x = @sprite.zoom_y = @scale
+      @sprite.opacity = 225
+      unless @dot && !@dot.disposed?
+        @dot = Sprite.new(viewport)
+        db = Bitmap.new(4, 4)
+        db.fill_rect(0, 0, 4, 4, Color.new(255, 255, 255))
+        @dot.bitmap = db
+        @dot.z = 2
+      end
+    end
+
+    def show
+      return unless @sprite && !@sprite.disposed? && @sprite.bitmap
+      margin = 10
+      @sprite.x = screen_w - @w * @scale - margin
+      @sprite.y = margin
+      @sprite.visible = true
+      blink = (Yami.frame_no / 20) % 2 == 0
+      d = [@scale, 3].max
+      @dot.zoom_x = @dot.zoom_y = d / 4.0
+      @dot.x = @sprite.x + $game_player.x * @scale + (@scale - d) / 2.0
+      @dot.y = @sprite.y + $game_player.y * @scale + (@scale - d) / 2.0
+      @dot.opacity = blink ? 255 : 170
+      @dot.visible = true
+    end
+  end
+end
+
+Yami.on_tick { Yami::Features.tick }
+Yami.on_tick { Yami::Cheats.install }
+Yami.on_tick { Yami::InstantText.install }
+Yami.on_tick { Yami::Minimap.tick }
+
 Yami.status("turbo", 0)
 Yami.log("runtime #{Yami::VERSION} ready (rgss #{Yami.rgss}, widescreen=#{Yami::Wide.mode})")

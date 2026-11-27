@@ -2,6 +2,7 @@ package com.lordnordyx.yami
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,6 +27,21 @@ class MainActivity : ComponentActivity() {
         setContent {
             YamiTheme(vm) { YamiNav(vm) }
         }
+    }
+
+    /**
+     * Controllers: A selects and B goes back everywhere in the app (the
+     * library, settings, sheets, dialogs), whatever the device's own key
+     * mapping does with gamepad buttons.
+     */
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val mapped = when (event.keyCode) {
+            KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_DPAD_CENTER
+            KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_BACK
+            else -> return super.dispatchKeyEvent(event)
+        }
+        return super.dispatchKeyEvent(KeyEvent(event.downTime, event.eventTime, event.action, mapped, event.repeatCount,
+            event.metaState, event.deviceId, event.scanCode, event.flags, event.source))
     }
 
     override fun onNewIntent(intent: Intent) {

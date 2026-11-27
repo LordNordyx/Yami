@@ -11,6 +11,13 @@ enum class WidescreenMode(val label: String, val blurb: String) {
 }
 
 @Serializable
+enum class MenuSides(val label: String, val blurb: String) {
+    ART("Blurred art", "The menu's own picture, blurred and dimmed, fills the sides"),
+    DIM("Dimmed", "The same, much darker"),
+    BLACK("Pure black", "AMOLED black: the sides are simply off"),
+}
+
+@Serializable
 enum class AspectPreset(val label: String, val ratio: Float) {
     DEVICE("Match device", 0f),
     R16_10("16:10", 16f / 10f),
@@ -88,6 +95,12 @@ data class GameSettings(
     val graphicsCache: Boolean = true,
     /** Run RPG Maker XP games (40 fps) at 60 fps, like Kirin's option. */
     val force60: Boolean = false,
+    /** Show dialogue at once instead of letter by letter (Pokémon Essentials). */
+    val instantText: Boolean = true,
+    /** Small map of the current area in the top-right corner. */
+    val minimap: Boolean = false,
+    /** What fills the sides of 4:3 menus in panoramic mode. */
+    val menuSides: MenuSides = MenuSides.ART,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,

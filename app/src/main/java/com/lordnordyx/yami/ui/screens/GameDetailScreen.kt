@@ -63,6 +63,7 @@ import com.lordnordyx.yami.ui.LibraryViewModel
 import com.lordnordyx.yami.ui.NavRow
 import com.lordnordyx.yami.ui.PrimaryButton
 import com.lordnordyx.yami.ui.Section
+import com.lordnordyx.yami.ui.focusRing
 import com.lordnordyx.yami.ui.formatPlaytime
 import com.lordnordyx.yami.ui.theme.Dark
 import com.lordnordyx.yami.ui.theme.Mono
@@ -199,7 +200,7 @@ fun GameDetailScreen(vm: LibraryViewModel, id: String, back: () -> Unit, openSet
 @Composable
 private fun RoundIcon(icon: @Composable () -> Unit, onClick: () -> Unit) {
     Box(Modifier.clip(CircleShape).background(Color(0x99000000))) {
-        IconButton(onClick) { icon() }
+        IconButton(onClick, Modifier.focusRing(CircleShape)) { icon() }
     }
 }
 

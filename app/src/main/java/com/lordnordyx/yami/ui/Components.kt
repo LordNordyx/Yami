@@ -60,6 +60,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -79,6 +82,19 @@ import com.lordnordyx.yami.ui.theme.Dark
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+
+// ================================================================ focus
+/**
+ * A clear accent outline on whatever a controller (or keyboard) has
+ * selected; Material's focus tint is nearly invisible on black. Put it
+ * before clickable/focusable in the chain.
+ */
+fun Modifier.focusRing(shape: Shape = RoundedCornerShape(16.dp), width: Dp = 2.dp): Modifier = composed {
+    var focused by remember { mutableStateOf(false) }
+    val accent = MaterialTheme.colorScheme.primary
+    this.onFocusChanged { focused = it.isFocused }
+        .then(if (focused) Modifier.border(width, accent, shape).background(accent.copy(alpha = 0.10f), shape) else Modifier)
+}
 
 // ================================================================ the mark
 /**
@@ -166,7 +182,7 @@ fun formatPlaytime(sec: Long): String = when {
 fun YamiTopBar(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {}) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 4.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        if (onBack != null) IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
+        if (onBack != null) IconButton(onBack, Modifier.focusRing(CircleShape)) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
         else Spacer(Modifier.width(12.dp))
         Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f),
             maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -213,7 +229,7 @@ private fun RowShell(title: String, subtitle: String?, icon: ImageVector?, onCli
                      enabled: Boolean = true, trailing: @Composable () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 56.dp)
-            .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(if (onClick != null && enabled) Modifier.focusRing(RoundedCornerShape(14.dp)).clickable(onClick = onClick) else Modifier)
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -287,7 +303,7 @@ fun <T> OptionSheet(title: String, options: List<T>, selected: T?, label: (T) ->
             Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp))
             options.forEach { o ->
                 val sel = o == selected
-                Row(Modifier.fillMaxWidth().clickable { onPick(o) }.padding(horizontal = 24.dp, vertical = 14.dp),
+                Row(Modifier.fillMaxWidth().focusRing(RoundedCornerShape(14.dp)).clickable { onPick(o) }.padding(horizontal = 24.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
                         Text(label(o), style = MaterialTheme.typography.bodyLarge,
@@ -336,7 +352,7 @@ fun SliderRow(title: String, value: Float, range: ClosedFloatingPointRange<Float
 // ================================================================ buttons
 @Composable
 fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, height: Dp = 52.dp) {
-    Button(onClick, modifier.height(height), shape = CircleShape,
+    Button(onClick, modifier.focusRing(CircleShape, 3.dp).height(height), shape = CircleShape,
         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = Dark.Void),
         contentPadding = PaddingValues(horizontal = 22.dp)) {
         if (icon != null) { Icon(icon, null, Modifier.size(20.dp)); Spacer(Modifier.width(8.dp)) }
@@ -346,7 +362,7 @@ fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifi
 
 @Composable
 fun GhostButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, icon: ImageVector? = null, height: Dp = 52.dp) {
-    OutlinedButton(onClick, modifier.height(height), shape = CircleShape, border = BorderStroke(1.dp, Dark.Hairline),
+    OutlinedButton(onClick, modifier.focusRing(CircleShape).height(height), shape = CircleShape, border = BorderStroke(1.dp, Dark.Hairline),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = Dark.Ink),
         contentPadding = PaddingValues(horizontal = 20.dp)) {
         if (icon != null) { Icon(icon, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)) }

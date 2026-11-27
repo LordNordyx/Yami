@@ -90,6 +90,7 @@ import com.lordnordyx.yami.ui.OptionSheet
 import com.lordnordyx.yami.ui.PrimaryButton
 import com.lordnordyx.yami.ui.SheetHandle
 import com.lordnordyx.yami.ui.Wordmark
+import com.lordnordyx.yami.ui.focusRing
 import com.lordnordyx.yami.ui.formatPlaytime
 import com.lordnordyx.yami.ui.theme.Dark
 
@@ -215,15 +216,15 @@ private fun Header(count: Int, view: LibraryView, cycleView: () -> Unit, openSor
             Wordmark(22)
             Text(if (count == 1) "1 game" else "$count games", style = MaterialTheme.typography.bodySmall, color = Dark.Mist)
         }
-        IconButton(cycleView) {
+        IconButton(cycleView, Modifier.focusRing(CircleShape)) {
             Icon(when (view) {
                 LibraryView.COVERS -> Icons.Outlined.ViewAgenda
                 LibraryView.GRID -> Icons.Outlined.GridView
                 LibraryView.LIST -> Icons.Outlined.ViewList
             }, "Change view", tint = Dark.Mist)
         }
-        IconButton(openSort) { Icon(Icons.Outlined.Sort, "Sort", tint = Dark.Mist) }
-        IconButton(openSettings) { Icon(Icons.Outlined.Settings, "Settings", tint = Dark.Mist) }
+        IconButton(openSort, Modifier.focusRing(CircleShape)) { Icon(Icons.Outlined.Sort, "Sort", tint = Dark.Mist) }
+        IconButton(openSettings, Modifier.focusRing(CircleShape)) { Icon(Icons.Outlined.Settings, "Settings", tint = Dark.Mist) }
     }
 }
 
@@ -251,7 +252,7 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(Modifier.clip(CircleShape)
         .background(if (selected) accent.copy(alpha = 0.14f) else Color.Transparent)
         .border(1.dp, if (selected) accent.copy(alpha = 0.6f) else Dark.Hairline, CircleShape)
-        .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        .focusRing(CircleShape).clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp)) {
         Text(label, style = MaterialTheme.typography.labelLarge, color = if (selected) accent else Dark.Mist)
     }
 }
@@ -259,7 +260,7 @@ private fun FilterPill(label: String, selected: Boolean, onClick: () -> Unit) {
 @Composable
 private fun HeroCard(g: Game, onPlay: () -> Unit, onOpen: () -> Unit) {
     val shape = RoundedCornerShape(26.dp)
-    Box(Modifier.fillMaxWidth().height(230.dp).clip(shape).border(1.dp, Dark.Hairline, shape).clickable(onClick = onOpen)) {
+    Box(Modifier.fillMaxWidth().height(230.dp).focusRing(shape, 3.dp).clip(shape).border(1.dp, Dark.Hairline, shape).clickable(onClick = onOpen)) {
         Cover(g.coverPath, g.title, Modifier.fillMaxSize())
         Column(Modifier.align(Alignment.BottomStart).padding(20.dp).padding(end = 120.dp)) {
             Text("CONTINUE", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
@@ -276,13 +277,13 @@ private fun HeroCard(g: Game, onPlay: () -> Unit, onOpen: () -> Unit) {
 @Composable
 private fun GameCard(g: Game, compact: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onPlay: () -> Unit) {
     val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
-    Column(Modifier.clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
+    Column(Modifier.focusRing(shape, 3.dp).clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onPlay)) {
         Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f)) {
             Cover(g.coverPath, g.title, Modifier.fillMaxSize())
             if (g.favorite) Icon(Icons.Default.Star, "Favorite", Modifier.align(Alignment.TopEnd).padding(10.dp).size(18.dp),
                 tint = MaterialTheme.colorScheme.primary)
-            if (!compact) Box(Modifier.align(Alignment.BottomEnd).padding(10.dp).size(42.dp).clip(CircleShape)
+            if (!compact) Box(Modifier.align(Alignment.BottomEnd).padding(10.dp).size(42.dp).focusRing(CircleShape, 3.dp).clip(CircleShape)
                 .background(MaterialTheme.colorScheme.primary).clickable(onClick = onPlay), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.PlayArrow, "Play", tint = Dark.Void)
             }
@@ -300,7 +301,7 @@ private fun GameCard(g: Game, compact: Boolean, onClick: () -> Unit, onLongClick
 @Composable
 private fun ListRow(g: Game, onClick: () -> Unit, onLongClick: () -> Unit, onPlay: () -> Unit) {
     val shape = RoundedCornerShape(18.dp)
-    Row(Modifier.fillMaxWidth().clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
+    Row(Modifier.fillMaxWidth().focusRing(shape, 3.dp).clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Cover(g.coverPath, g.title, Modifier.size(width = 92.dp, height = 69.dp).clip(RoundedCornerShape(12.dp)), fade = false)
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
@@ -311,7 +312,7 @@ private fun ListRow(g: Game, onClick: () -> Unit, onLongClick: () -> Unit, onPla
             }
             Text("${g.engineHint} · ${formatPlaytime(g.playTimeSec)}", style = MaterialTheme.typography.bodySmall, color = Dark.Mist)
         }
-        Box(Modifier.size(40.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable(onClick = onPlay),
+        Box(Modifier.size(40.dp).focusRing(CircleShape, 3.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary).clickable(onClick = onPlay),
             contentAlignment = Alignment.Center) { Icon(Icons.Default.PlayArrow, "Play", tint = Dark.Void) }
     }
 }
@@ -349,7 +350,7 @@ private fun AddGameSheet(onDismiss: () -> Unit, importFolder: () -> Unit, import
 
 @Composable
 private fun AddOption(icon: ImageVector, title: String, desc: String, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().focusRing(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(horizontal = 24.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(42.dp).clip(RoundedCornerShape(13.dp)).background(Dark.Dusk), contentAlignment = Alignment.Center) {
             Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
         }

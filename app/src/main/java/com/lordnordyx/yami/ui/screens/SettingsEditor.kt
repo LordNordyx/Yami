@@ -4,6 +4,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.FastForward
@@ -17,6 +18,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.lordnordyx.yami.data.AspectPreset
 import com.lordnordyx.yami.data.ControllerProfile
 import com.lordnordyx.yami.data.GameSettings
+import com.lordnordyx.yami.data.MenuSides
 import com.lordnordyx.yami.data.ScalingFilter
 import com.lordnordyx.yami.data.ScreenFit
 import com.lordnordyx.yami.data.TurboMode
@@ -26,14 +28,35 @@ import com.lordnordyx.yami.ui.ChoiceRow
 import com.lordnordyx.yami.ui.LibraryViewModel
 import com.lordnordyx.yami.ui.NavRow
 import com.lordnordyx.yami.ui.Section
+import com.lordnordyx.yami.ui.SectionNote
 import com.lordnordyx.yami.ui.SliderRow
 import com.lordnordyx.yami.ui.SwitchRow
 import kotlinx.coroutines.launch
 import java.io.File
 
+/** One choice for the overall picture: scaling, fit and shader together. */
+enum class Look(val label: String, val blurb: String, val fit: ScreenFit?, val scaling: ScalingFilter?, val shader: String?) {
+    PIXEL("Pixel perfect", "Whole-number scaling with sharp pixels: every pixel the same size. May leave thin borders",
+        ScreenFit.INTEGER, ScalingFilter.NEAREST, "none"),
+    SHARP("Sharp", "Sharp pixels filling the screen", ScreenFit.FIT, ScalingFilter.NEAREST, "none"),
+    SMOOTH("Smooth", "Soft scaling, no effects", ScreenFit.FIT, ScalingFilter.BILINEAR, "none"),
+    CRT("CRT", "Scanlines, aperture mask, glow and a gentle curve — an old TV", ScreenFit.FIT, ScalingFilter.NEAREST, "crt"),
+    LCD("Handheld LCD", "The fine pixel grid of a handheld screen", ScreenFit.FIT, ScalingFilter.NEAREST, "lcd"),
+    SCANLINES("Scanlines", "Clean horizontal lines, no curve", ScreenFit.FIT, ScalingFilter.NEAREST, "scanlines"),
+    DARKNESS("Darkness", "Edges sink into black, deeper blacks", ScreenFit.FIT, ScalingFilter.NEAREST, "darkness"),
+    CUSTOM("Custom", "Your own mix of the settings below", null, null, null);
+
+    fun applyTo(s: GameSettings) = s.copy(fit = fit ?: s.fit, scaling = scaling ?: s.scaling, shader = shader ?: s.shader)
+
+    companion object {
+        fun of(s: GameSettings) = entries.firstOrNull { it != CUSTOM && it.fit == s.fit && it.scaling == s.scaling && it.shader == s.shader } ?: CUSTOM
+    }
+}
+
 /** Engine options, one sub-menu each. Used for per-game settings and global defaults. */
 enum class SettingsCategory(val label: String, val icon: ImageVector) {
     DISPLAY("Display", Icons.Outlined.Monitor),
+    GAMEPLAY("Gameplay", Icons.Outlined.AutoAwesome),
     PERFORMANCE("Performance", Icons.Outlined.Bolt),
     SPEED("Speed-up", Icons.Outlined.FastForward),
     INPUT("Overlay & input", Icons.Outlined.Gamepad),
@@ -42,7 +65,9 @@ enum class SettingsCategory(val label: String, val icon: ImageVector) {
 
     /** One line describing the current state, shown on the menu row. */
     fun summary(s: GameSettings): String = when (this) {
-        DISPLAY -> listOf(s.widescreen.label, s.fit.label.substringBefore(" ("), s.scaling.label.substringBefore(" (")).joinToString(" · ")
+        DISPLAY -> listOf(Look.of(s).label, s.widescreen.label).joinToString(" · ")
+        GAMEPLAY -> listOfNotNull("Instant text".takeIf { s.instantText }, "Minimap".takeIf { s.minimap })
+            .ifEmpty { listOf("As the game made it") }.joinToString(" · ")
         PERFORMANCE -> listOfNotNull(
             "GPU maps".takeIf { s.gpuMaps }, "60 FPS".takeIf { s.force60 },
             "Graphics cache".takeIf { s.graphicsCache }, "VSync".takeIf { s.vsync },
@@ -76,10 +101,18 @@ fun ColumnScope.SettingsCategoryContent(vm: LibraryViewModel, cat: SettingsCateg
 
     when (cat) {
         SettingsCategory.DISPLAY -> {
+            Section("Look") {
+                val look = Look.of(s)
+                ChoiceRow("Look", look, Look.entries.filter { it != Look.CUSTOM || look == Look.CUSTOM }, { it.label },
+                    look.blurb, describe = { it.blurb }) { v -> if (v != Look.CUSTOM) onChange { v.applyTo(it) } }
+            }
             Section("Screen") {
                 ChoiceRow("Widescreen", s.widescreen, WidescreenMode.entries, { it.label }, s.widescreen.blurb, describe = { it.blurb }) { v -> onChange { it.copy(widescreen = v) } }
                 if (s.widescreen != WidescreenMode.OFF) {
                     ChoiceRow("Aspect ratio", s.aspect, AspectPreset.entries, { it.label }) { v -> onChange { it.copy(aspect = v) } }
+                }
+                if (s.widescreen == WidescreenMode.AUTO || s.widescreen == WidescreenMode.PANORAMIC) {
+                    ChoiceRow("Menu sides", s.menuSides, MenuSides.entries, { it.label }, describe = { it.blurb }) { v -> onChange { it.copy(menuSides = v) } }
                 }
                 ChoiceRow("Screen fit", s.fit, ScreenFit.entries, { it.label.substringBefore(" (") }, describe = {
                     when (it) {
@@ -114,6 +147,17 @@ fun ColumnScope.SettingsCategoryContent(vm: LibraryViewModel, cat: SettingsCateg
                 SliderRow("Internal resolution", s.internalResolution, 1f..4f, steps = 5, format = { "%.1fx".format(it) },
                     subtitle = "Renders larger before scaling to the screen") { v -> onChange { it.copy(internalResolution = v) } }
                 SwitchRow("Hi-res texture packs", s.hiresTextures, "Loads Hires/ replacements when the game ships them") { v -> onChange { it.copy(hiresTextures = v) } }
+            }
+        }
+        SettingsCategory.GAMEPLAY -> {
+            Section("Dialogue") {
+                SwitchRow("Instant text", s.instantText, "Messages appear at once instead of letter by letter. Pauses and button prompts still work (Pokémon Essentials)") { v -> onChange { it.copy(instantText = v) } }
+            }
+            Section("Map") {
+                SwitchRow("Minimap", s.minimap, "A small map of the area in the top-right corner: walkable ground, water, grass and you") { v -> onChange { it.copy(minimap = v) } }
+            }
+            Section(null) {
+                SectionNote("Cheats — shiny odds, no random encounters, walk through walls, money, healing — are in the in-game menu (≡) → Cheats.")
             }
         }
         SettingsCategory.PERFORMANCE -> {
