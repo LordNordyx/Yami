@@ -73,12 +73,16 @@ module Yami
   # --------------------------------------------------------------- frame hooks
   @tick_hooks = []
   @once_hooks = []
+  @frame_no = 0
 
   def on_tick(&b); @tick_hooks << b; end
   def once_pending; @once_hooks.size; end
   def once_when(cond, &b); @once_hooks << [cond, b]; end
 
+  def frame_no; @frame_no; end
+
   def tick
+    @frame_no += 1
     @key_snap = nil # new frame: read the keyboard afresh
     @tick_hooks.each { |h| h.call rescue log("tick hook: #{$!}") }
     run_once
@@ -366,8 +370,36 @@ Yami.on_tick { Yami::Turbo.poll }
 module Yami
   @fps_frames = 0
   @fps_t = nil
+  # Frame-time monitor for the session log: every 10 s, how many frames ran
+  # long (over 1.5x the frame time), the worst one, and how many of them had
+  # a Ruby GC run in them.
+  @hitch = { n: 0, gc: 0, worst: 0.0, frames: 0, t: nil }
+  def self.hitch_tick(now)
+    h = @hitch
+    gc = GC.count
+    if @last_frame_t
+      dt = now - @last_frame_t
+      target = 1.0 / [Graphics.frame_rate.to_i, 1].max
+      h[:frames] += 1
+      if dt > target * 1.5
+        h[:n] += 1
+        h[:gc] += 1 if gc != @last_gc
+        h[:worst] = dt if dt > h[:worst]
+      end
+    end
+    @last_frame_t = now
+    @last_gc = gc
+    h[:t] ||= now
+    return if now - h[:t] < 10
+    log(format("frames: %d long of %d (%d with GC), worst %.0f ms", h[:n], h[:frames], h[:gc], h[:worst] * 1000)) if h[:frames] > 0
+    h[:n] = h[:gc] = h[:frames] = 0
+    h[:worst] = 0.0
+    h[:t] = now
+  end
+
   def self.fps_tick
     now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    hitch_tick(now) rescue nil
     @fps_t ||= now
     @fps_frames += 1
     return if now - @fps_t < 1.0
@@ -1038,16 +1070,42 @@ module Yami
         end
       end
 
+      # Games ask for Graphics.width hundreds of times a frame; walking the
+      # stack each time cost milliseconds and fed the GC (stutter). A call
+      # site (its 3 nearest frames) gets the same answer within a frame, so
+      # the full walk runs once per site per frame.
+      # Key: the 3 nearest frames of game code (Yami's layer and the game's
+      # own resizer wrappers skipped, they're the same for every caller), or
+      # nil when the nearest 8 frames don't have 3 (then: no caching).
+      def site_key(locs)
+        k = 0
+        n = 0
+        locs.each do |l|
+          next if section_kind(l.path) == :infra
+          k = (k * 31 + l.lineno) ^ l.path.hash
+          return k if (n += 1) == 3
+        end
+        nil
+      end
+
+      def site_cache(kind)
+        f = Yami.frame_no
+        if @site_frame != f
+          @site_frame = f
+          @site_map = {}
+          @site_dialog = {}
+        end
+        kind == :map ? @site_map : @site_dialog
+      end
+
       def map_caller?
         return true if (@render_depth || 0) > 0
-        nearest = true
-        caller_locations(2, 40).each do |loc|
-          k = section_kind(loc.path)
-          next if k == :infra
-          return true if k == :render || (nearest && k == :map)
-          nearest = false
-        end
-        false
+        key = site_key(caller_locations(2, 8))
+        return map_caller_walk unless key
+        cache = site_cache(:map)
+        r = cache[key]
+        return r unless r.nil?
+        cache[key] = map_caller_walk
       rescue StandardError => e
         # Graphics.width must never take a game down: treat as UI
         Yami.log("map_caller?: #{e.class}: #{e.message}") unless @mc_logged
@@ -1055,17 +1113,37 @@ module Yami
         false
       end
 
+      def map_caller_walk
+        nearest = true
+        caller_locations(3, 40).each do |loc|
+          k = section_kind(loc.path)
+          next if k == :infra
+          return true if k == :render || (nearest && k == :map)
+          nearest = false
+        end
+        false
+      end
+
       # Is this the message system, while the map is showing? (window
       # libraries are transparent; anything else stops the search)
       def dialog_caller?
         return false unless Yami::Wide::Layers.map_shown_cached?
-        caller_locations(2, 40).each do |loc|
+        key = site_key(caller_locations(2, 8))
+        return dialog_caller_walk unless key
+        cache = site_cache(:dialog)
+        r = cache[key]
+        return r unless r.nil?
+        cache[key] = dialog_caller_walk
+      rescue StandardError
+        false
+      end
+
+      def dialog_caller_walk
+        caller_locations(3, 40).each do |loc|
           k = section_kind(loc.path)
           next if k == :infra || k == :lib
           return k == :dialog
         end
-        false
-      rescue StandardError
         false
       end
 

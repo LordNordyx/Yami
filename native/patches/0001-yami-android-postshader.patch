@@ -913,6 +913,72 @@ index ac5ab55..85fb498 100644
      void resizeWindow(int width, int height, bool center=false);
  	void drawMovieFrame(const THEORAPLAY_VideoFrame* video, Bitmap *videoBitmap);
  	bool updateMovieInput(Movie *movie);
+diff --git a/src/display/tilemap.cpp b/src/display/tilemap.cpp
+index bef8746..351ed85 100644
+--- a/src/display/tilemap.cpp
++++ b/src/display/tilemap.cpp
+@@ -67,8 +67,12 @@ static const int atAreaW = autotileW * atFrames;
+ static const int tsLaneW = tilesetW / 1;
+ 
+ /* Map viewport size */
+-static const int viewpW = 21;
+-static const int viewpH = 16;
++/* Yami: the visible tile area follows the viewport (16:9 maps are wider than
++ * upstream's fixed 21x16, which left a flickering strip on the right). */
++static const int viewpWMin = 21;
++static const int viewpHMin = 16;
++static const int viewpWMax = 64;
++static const int viewpH = 32; /* upper bound; sizes the z-layer arrays */
+ 
+ static const size_t zlayersMax = viewpH + 5;
+ 
+@@ -273,6 +277,8 @@ struct TilemapPrivate
+ 
+ 	/* Map viewport position */
+ 	Vec2i viewpPos;
++	int viewW = viewpWMin;
++	int viewH = viewpHMin;
+ 
+ 	/* Ground layer vertices */
+ 	SVVector groundVert;
+@@ -419,7 +425,7 @@ struct TilemapPrivate
+ 
+ 	void updateFlashMapViewport()
+ 	{
+-		flashMap.setViewport(IntRect(viewpPos, Vec2i(viewpW, viewpH)));
++		flashMap.setViewport(IntRect(viewpPos, Vec2i(viewW, viewH)));
+ 	}
+ 
+ 	void updateAtlasInfo()
+@@ -481,6 +487,17 @@ struct TilemapPrivate
+ 	{
+ 		elem.sceneGeo = geo;
+ 		mapViewportDirty = true;
++
++		/* Tiles 0..view inclusive must cover the area plus a sub-tile scroll */
++		int w = std::max(viewpWMin, std::min((geo.rect.w + 31) / 32 + 1, viewpWMax));
++		int h = std::max(viewpHMin, std::min((geo.rect.h + 31) / 32 + 1, viewpH - 1));
++		if (w != viewW || h != viewH)
++		{
++			viewW = w;
++			viewH = h;
++			buffersDirty = true;
++			updateFlashMapViewport();
++		}
+ 	}
+ 
+ 	void invalidateAtlasSize()
+@@ -821,8 +838,8 @@ struct TilemapPrivate
+ 			minY = -oy;
+ 
+ 		// There could be off-by-one issues in these couple sections.
+-		int maxX = viewpW;
+-		int maxY = viewpH;
++		int maxX = viewW;
++		int maxY = viewH;
+ 		if (ox + maxX >= mapW)
+ 			maxX = mapW - ox - 1;
+ 		if (oy + maxY >= mapH)
 diff --git a/src/display/viewport.cpp b/src/display/viewport.cpp
 index 29b3219..7a224b7 100644
 --- a/src/display/viewport.cpp
@@ -930,10 +996,28 @@ index 29b3219..7a224b7 100644
  	Scene::composite();
  
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
-index 67c9be0..fb10591 100644
+index 67c9be0..a95edbe 100644
 --- a/src/filesystem/filesystem.cpp
 +++ b/src/filesystem/filesystem.cpp
-@@ -295,6 +295,12 @@ static void throwPhysfsError(const char *desc) {
+@@ -36,6 +36,7 @@
+ #include <algorithm>
+ #include <stack>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
+ #include <unistd.h>
+ #include <vector>
+@@ -278,6 +279,9 @@ struct FileSystemPrivate {
+   /* This is for compatibility with games that take Windows'
+    * case insensitivity for granted */
+   bool havePathCache;
++
++  /* Yami: mixed case paths of every directory seen (persisted path cache) */
++  std::vector<std::string> yamiDirs;
+ };
+ 
+ static void throwPhysfsError(const char *desc) {
+@@ -295,6 +299,12 @@ static void throwPhysfsError(const char *desc) {
  }
  
  FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
@@ -945,6 +1029,153 @@ index 67c9be0..fb10591 100644
 +#endif
    if (PHYSFS_init(argv0) == 0)
      throwPhysfsError("Error initializing PhysFS");
+ 
+@@ -418,6 +428,7 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+   PHYSFS_stat(fullPath, &stat);
+ 
+   if (stat.filetype == PHYSFS_FILETYPE_DIRECTORY) {
++    data.p->yamiDirs.push_back(mixedCase);
+     /* Create a new list for this directory */
+     std::vector<std::string> &list = data.p->fileLists[lowerCase];
+ 
+@@ -441,9 +452,119 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+   return PHYSFS_ENUM_OK;
+ }
+ 
++/* Yami: the path cache is kept on disk (per game, in YAMI_DATA_DIR). Listing
++ * a big game on Android shared storage (FUSE) takes a long time on every
++ * start; the saved list is reused while every directory keeps its
++ * modification time (adding, removing or renaming a file changes it). */
++static std::string yamiPathCacheFile() {
++  const char *d = getenv("YAMI_DATA_DIR");
++  if (!d || !*d)
++    return std::string();
++  return std::string(d) + "/pathcache.v1";
++}
++
++static PHYSFS_sint64 yamiDirMTime(const std::string &mixed) {
++  PHYSFS_Stat st;
++  if (!PHYSFS_stat(mixed.c_str(), &st))
++    return -2;
++  return st.modtime;
++}
++
++static bool yamiLoadPathCache(FileSystemPrivate *p) {
++  const std::string fn = yamiPathCacheFile();
++  if (fn.empty())
++    return false;
++  FILE *f = fopen(fn.c_str(), "rb");
++  if (!f)
++    return false;
++
++  bool ok = false;
++  char *line = 0;
++  size_t cap = 0;
++  ssize_t len;
++  size_t dirs = 0, files = 0;
++
++  if ((len = getline(&line, &cap, f)) > 0 && strcmp(line, "YAMIPC1\n") == 0) {
++    ok = true;
++    p->fileLists[""];
++    while ((len = getline(&line, &cap, f)) > 0) {
++      if (line[len - 1] == '\n')
++        line[--len] = 0;
++      if (len >= 2 && line[0] == 'F' && line[1] == '\t') {
++        std::string mixed(line + 2);
++        std::string lower = mixed;
++        strTolower(lower);
++        size_t slash = lower.rfind('/');
++        std::string dir = slash == std::string::npos ? std::string() : lower.substr(0, slash);
++        std::string name = slash == std::string::npos ? lower : lower.substr(slash + 1);
++        p->fileLists[dir].push_back(name);
++        p->pathCache.insert(lower, mixed);
++        ++files;
++      } else if (len >= 2 && line[0] == 'D' && line[1] == '\t') {
++        char *tab = strchr(line + 2, '\t');
++        if (!tab) { ok = false; break; }
++        *tab = 0;
++        long long mt = strtoll(line + 2, 0, 10);
++        std::string mixed(tab + 1);
++        if ((long long)yamiDirMTime(mixed) != mt) { ok = false; break; }
++        std::string lower = mixed;
++        strTolower(lower);
++        p->fileLists[lower];
++        p->yamiDirs.push_back(mixed);
++        ++dirs;
++      } else {
++        ok = false;
++        break;
++      }
++    }
++  }
++  free(line);
++  fclose(f);
++
++  if (!ok) {
++    p->fileLists.clear();
++    p->pathCache.clear();
++    p->yamiDirs.clear();
++    Debug() << "Saved path cache out of date, rescanning";
++    return false;
++  }
++  Debug() << "Path cache loaded from disk:" << files << "files," << dirs << "folders";
++  return true;
++}
++
++static void yamiSavePathCache(FileSystemPrivate *p) {
++  const std::string fn = yamiPathCacheFile();
++  if (fn.empty())
++    return;
++  const std::string tmp = fn + ".tmp";
++  FILE *f = fopen(tmp.c_str(), "wb");
++  if (!f)
++    return;
++  fputs("YAMIPC1\n", f);
++  for (size_t i = 0; i < p->yamiDirs.size(); ++i)
++    fprintf(f, "D\t%lld\t%s\n", (long long)yamiDirMTime(p->yamiDirs[i]), p->yamiDirs[i].c_str());
++  for (BoostHash<std::string, std::string>::const_iterator it = p->pathCache.cbegin();
++       it != p->pathCache.cend(); ++it)
++    fprintf(f, "F\t%s\n", it->second.c_str());
++  bool good = fflush(f) == 0;
++  good = (fclose(f) == 0) && good;
++  if (good)
++    rename(tmp.c_str(), fn.c_str());
++  else
++    remove(tmp.c_str());
++}
++
+ void FileSystem::createPathCache() {
+   Debug() << "Loading path cache...";
+ 
++  if (yamiLoadPathCache(p)) {
++    p->havePathCache = true;
++    return;
++  }
++
++  /* The root's own modification time guards files added at the top level */
++  p->yamiDirs.push_back(std::string());
++
+   CacheEnumData data(p);
+   data.fileLists.push(&p->fileLists[""]);
+   PHYSFS_enumerate("", cacheEnumCB, &data);
+@@ -451,6 +572,7 @@ void FileSystem::createPathCache() {
+   p->havePathCache = true;
+ 
+   Debug() << "Path cache completed.";
++  yamiSavePathCache(p);
+ }
+ 
+ void FileSystem::reloadPathCache() {
+@@ -458,6 +580,10 @@ void FileSystem::reloadPathCache() {
+     
+     p->fileLists.clear();
+     p->pathCache.clear();
++    p->yamiDirs.clear();
++    const std::string fn = yamiPathCacheFile();
++    if (!fn.empty())
++      remove(fn.c_str());
+     createPathCache();
+ }
  
 diff --git a/src/main.cpp b/src/main.cpp
 index af81d66..95cf26e 100644
