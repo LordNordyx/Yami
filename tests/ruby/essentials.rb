@@ -68,7 +68,8 @@ check "no border offsets, factor 1", $ResizeOffsetX == 0 && $ResizeOffsetY == 0 
 
 # --- title screen ---
 vp = Viewport.new(0, 0, Graphics.width, Graphics.height)
-want = { "full" => [0, 0, 852, 480], "panoramic" => [106, 0, 640, 480], "off" => [0, 0, 640, 480] }[mode]
+# panoramic: UI keeps the game's own rect; the engine draws the UI layer centred
+want = { "full" => [0, 0, 852, 480], "panoramic" => [0, 0, 640, 480], "off" => [0, 0, 640, 480] }[mode]
 check "title viewport drawn at #{want.inspect}", vp.native_rect == want
 check "game still reads back its own rect", vp.rect.width == Graphics.width
 ui = Viewport.new(0, 0, 640, 480)
@@ -76,7 +77,7 @@ check "640x480 UI viewport drawn at #{want.inspect}", ui.native_rect == want
 fade = Graphics.class_variable_get(:@@fadeoutvp)
 check "fade-to-black viewport covers the whole screen", fade.native_rect == [0, 0, nw, 480]
 s = Sprite.new; s.x = 10; s.y = 20
-sx = mode == "panoramic" ? 116 : 10
+sx = 10 # never moved by Yami (panoramic: the engine places the UI layer)
 check "sprite without viewport placed at x=#{sx}", s.native_pos == [sx, 20]
 s2 = Sprite.new(vp); s2.x = 10
 check "sprite inside a viewport not offset", s2.native_pos[0] == 10
@@ -157,7 +158,7 @@ check "...and still after Flash re-centres it from field-move code", pbUseFlash(
 check "dark-cave sprite not shifted like UI", dark.native_pos[0] == 0
 check "menus still see the game's width afterwards", Graphics.width == gw
 Graphics.update
-pic = { "full" => [0, 0, 852, 480], "panoramic" => [106, 0, 640, 480], "off" => [0, 0, 640, 480] }[mode]
+pic = { "full" => [0, 0, 852, 480], "panoramic" => [0, 0, 640, 480], "off" => [0, 0, 640, 480] }[mode]
 check "map picture layer at #{pic.inspect}", sm.pictures.native_rect == pic
 
 # A wild battle starts inside Game_Player#update: it must still be laid out as UI.
@@ -224,8 +225,13 @@ if mode == "panoramic"
   eval(<<~RB, TOPLEVEL_BINDING, "135:PScreen_Bag")
     def pbOpenTestBag
       v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999
-      bg = Sprite.new(v); bg.bitmap = Bitmap.new(640, 480)
+      bg = Sprite.new(v); bg.bitmap = Bitmap.new("Graphics/Pictures/bagbg") # loaded picture, 640x480
       [v, bg]
+    end
+    def pbOpenTestHud
+      v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999
+      canvas = Sprite.new(v); canvas.bitmap = Bitmap.new(Graphics.width, Graphics.height) # drawn-on overlay
+      v
     end
     def pbOpenTestOverlay
       v = Viewport.new(0, 0, Graphics.width, Graphics.height); v.z = 99999
@@ -233,12 +239,15 @@ if mode == "panoramic"
       v
     end
   RB
+  hud = pbOpenTestHud; Graphics.update
+  check "a full-size HUD canvas over the map keeps the map at the sides", Graphics.ambient.nil?
+  hud.dispose
   bagvp, bagbg = pbOpenTestBag
   Graphics.update
   check "full-screen scene over the map: ambient side fill on", Graphics.ambient == [106, 640, 45]
   bw2 = pbCreateMessageWindow
   check "textbox inside a full-screen scene stays in its layout (640 px, centred)",
-        bw2.width == 640 && bw2.sprites[0].viewport.nil? && bw2.sprites[0].native_pos[0] == 106
+        bw2.width == 640 && bw2.sprites[0].viewport.nil? && bw2.sprites[0].native_pos[0] == 0
   bagbg.opacity = 0; Graphics.update
   check "...off while its background is transparent", Graphics.ambient.nil?
   bagbg.opacity = 255; Graphics.update

@@ -111,7 +111,9 @@ elsif kind == "resizer"
   elsif mode == "panoramic"
     check "screen is 640x480 widened to 852x480", Graphics.yami_native_width == 852 && Graphics.yami_native_height == 480
     check "UI still sees 640", Graphics.width == 640
-    check "UI viewport centred", Viewport.new(0, 0, 640, 480).rect == [106, 0, 640, 480]
+    check "UI viewport kept as the game set it", Viewport.new(0, 0, 640, 480).rect == [0, 0, 640, 480]
+    Graphics.update
+    check "engine draws the UI layer centred", Graphics.ui_clip == [106, 0, 640, 480]
   else
     check "screen is 640x480 widened to 852x480", Graphics.yami_native_width == 852 && Graphics.yami_native_height == 480
     check "game's Graphics.width reports the real width", Graphics.width == 852 && Graphics.height == 480
@@ -208,11 +210,15 @@ else # essentials
           Yami::Wide.section_kind("021:Game_Player") == :map && Yami::Wide.section_kind("120:Pause Menu") == :ui
     check "map code sees full width", Game_Map.new.update == 684
     check "map viewport full width", Spriteset_Map.new.vp.rect == [0, 0, 684, 384]
-    check "UI viewport centered", Viewport.new(0, 0, 512, 384).rect == [86, 0, 512, 384]
+    # UI objects stay exactly as the game laid them out; the engine draws
+    # the UI layer in the centred box.
+    check "UI viewport kept as the game set it", Viewport.new(0, 0, 512, 384).rect == [0, 0, 512, 384]
     s = Sprite.new; s.x = 10
-    check "nil-viewport sprite offset, logical x preserved", s.x == 10 && s.instance_variable_get(:@x) == 96
+    check "UI sprite untouched", s.x == 10 && s.instance_variable_get(:@x) == 10
     w = Window.new; w.x = 0
-    check "window offset", w.instance_variable_get(:@x) == 86 && w.x == 0
+    check "window untouched", w.instance_variable_get(:@x) == 0 && w.x == 0
+    Graphics.update
+    check "engine draws the UI layer at [86, 0, 512, 384]", Graphics.ui_clip == [86, 0, 512, 384]
     s2 = Sprite.new(Viewport.new(0, 0, 10, 10)); s2.x = 5
     check "sprite inside viewport not double-offset", s2.instance_variable_get(:@x) == 5
   end

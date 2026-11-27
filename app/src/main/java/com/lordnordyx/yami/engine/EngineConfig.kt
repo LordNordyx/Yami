@@ -68,7 +68,10 @@ object EngineConfig {
         })
 
         val rgss = if (s.rgssVersionOverride in 1..3) s.rgssVersionOverride else game.rgssVersion
-        val vsync = s.vsync && displayPacesEvenly(context, if (rgss == 1) 40f else 60f)
+        // RPG Maker XP runs at 40 fps, but games made for mkxp-z (they ship an
+        // mkxp.json, e.g. Pokémon Essentials v18+ such as Pokémon Myth) set 60.
+        val gameRate = if (rgss != 1 || shipsMkxpJson(gameDir)) 60f else 40f
+        val vsync = s.vsync && displayPacesEvenly(context, gameRate)
         writeMkxpJson(gameDir, buildOverrides(game, s.copy(vsync = vsync), app, runtime, cfg, optimizeMode))
         return Prepared(gameDir, dataDir, cfg)
     }
@@ -80,6 +83,13 @@ object EngineConfig {
      * an extra refresh on most frames and drops towards 30 fps; without vsync
      * the engine keeps its own steady 40.
      */
+    /** The developer's own mkxp.json (stashed by writeMkxpJson, or not ours yet). */
+    private fun shipsMkxpJson(gameDir: File): Boolean {
+        if (File(gameDir, "mkxp.json.original").exists()) return true
+        val f = File(gameDir, "mkxp.json")
+        return f.exists() && runCatching { !f.readText().contains(MARKER) }.getOrDefault(false)
+    }
+
     private fun displayPacesEvenly(context: Context, rate: Float): Boolean = runCatching {
         val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
         val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return@runCatching true

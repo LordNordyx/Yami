@@ -32,6 +32,11 @@ for m in full panoramic off auto; do for st in window border fullscreen; do
   ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/essentials.rb" $m $st | grep -v '^\[yami' )
 done; done
 
+for m in auto panoramic full off; do for b in border0 border1; do
+  echo "== Essentials v18 as Pokémon Myth uses it: widescreen $m, $b"
+  ( LC_ALL=C.UTF-8 ruby "$HERE/ruby/myth_v18.rb" $m $b | grep -v '^\[yami' )
+done; done
+
 echo "== Ruby 1.8 compatibility"
 ( cd "$TMP" && LC_ALL=C.UTF-8 ruby "$HERE/ruby/ruby18.rb" | grep -v '^\[yami' )
 

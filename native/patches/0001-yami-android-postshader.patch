@@ -355,8 +355,56 @@ index 7500a0a..29dbba3 100644
      
      Bitmap txtBitmap(txtSurf, nullptr, true);
      bool smooth = squeeze != 1.0f;
+diff --git a/src/display/gl/glstate.cpp b/src/display/gl/glstate.cpp
+index d021d88..780614d 100644
+--- a/src/display/gl/glstate.cpp
++++ b/src/display/gl/glstate.cpp
+@@ -42,14 +42,14 @@ void GLScissorBox::apply(const IntRect &value) {
+   if (shState) {
+     const double framebufferScalingFactor = shState->config().framebufferScalingFactor;
+     if (shState->config().enableHires && shState->graphics().isPingPongFramebufferActive()) {
+-      gl.Scissor((int)lround(framebufferScalingFactor * value.x), (int)lround(framebufferScalingFactor * value.y), (int)lround(framebufferScalingFactor * value.w), (int)lround(framebufferScalingFactor * value.h));
++      gl.Scissor((int)lround(framebufferScalingFactor * (value.x + offsetX)), (int)lround(framebufferScalingFactor * value.y), (int)lround(framebufferScalingFactor * value.w), (int)lround(framebufferScalingFactor * value.h));
+     }
+     else {
+-      gl.Scissor(value.x, value.y, value.w, value.h);
++      gl.Scissor(value.x + offsetX, value.y, value.w, value.h);
+     }
+   }
+   else {
+-    gl.Scissor(value.x, value.y, value.w, value.h);
++    gl.Scissor(value.x + offsetX, value.y, value.w, value.h);
+   }
+ }
+ 
+diff --git a/src/display/gl/glstate.h b/src/display/gl/glstate.h
+index f624408..4b8439e 100644
+--- a/src/display/gl/glstate.h
++++ b/src/display/gl/glstate.h
+@@ -83,8 +83,21 @@ public:
+ 	/* Sets the intersection of the current box with value */
+ 	void setIntersect(const IntRect &value);
+ 
++	/* [yami] Horizontal offset added when the box is applied: boxes stay in
++	 * game coordinates while Yami draws the UI layer into a centred part of
++	 * the wider screen. */
++	void setOffsetX(int x)
++	{
++		if (x == offsetX)
++			return;
++		offsetX = x;
++		refresh();
++	}
++	int getOffsetX() const { return offsetX; }
++
+ private:
+ 	void apply(const IntRect &value);
++	int offsetX = 0;
+ };
+ 
+ class GLScissorTest : public GLProperty<bool>
 diff --git a/src/display/gl/scene.cpp b/src/display/gl/scene.cpp
-index 21760aa..b7b6986 100644
+index 21760aa..77e33af 100644
 --- a/src/display/gl/scene.cpp
 +++ b/src/display/gl/scene.cpp
 @@ -20,6 +20,7 @@
@@ -367,7 +415,7 @@ index 21760aa..b7b6986 100644
  #include "sharedstate.h"
  
  Scene::Scene()
-@@ -96,8 +97,19 @@ void Scene::composite()
+@@ -96,8 +97,29 @@ void Scene::composite()
  	{
  		SceneElement *e = iter->data;
  
@@ -375,15 +423,25 @@ index 21760aa..b7b6986 100644
 +		if (!e->visible)
 +			continue;
 +
-+		/* [yami] UI layer clip, see yamiClip */
++		/* [yami] UI layer (see yamiClip): the element is drawn exactly as the
++		 * game laid it out, in its own resolution, through a GL viewport at the
++		 * centred box of the wider screen. Scissor boxes stay in game
++		 * coordinates (offset when applied), and everything is clipped to the
++		 * box, as the screen edge clips it on the original resolution. */
 +		if (yamiClip && !e->yamiUnclipped) {
++			const IntRect ui = *yamiClip;
++			const int oldOffset = glState.scissorBox.getOffsetX();
++			glState.viewport.pushSet(ui);
++			glState.scissorBox.setOffsetX(ui.x);
 +			glState.scissorTest.pushSet(true);
-+			glState.scissorBox.pushSet(*yamiClip);
-+			e->draw();
++			glState.scissorBox.pushSet(IntRect(0, 0, ui.w, ui.h));
+ 			e->draw();
 +			glState.scissorBox.pop();
 +			glState.scissorTest.pop();
++			glState.scissorBox.setOffsetX(oldOffset);
++			glState.viewport.pop();
 +		} else {
- 			e->draw();
++			e->draw();
 +		}
  	}
  }
@@ -483,7 +541,7 @@ index 1f9c956..e44959e 100644
  {
  public:
 diff --git a/src/display/graphics.cpp b/src/display/graphics.cpp
-index 3345468..3be4a18 100644
+index 3345468..5c7dac5 100644
 --- a/src/display/graphics.cpp
 +++ b/src/display/graphics.cpp
 @@ -542,7 +542,12 @@ public:
@@ -499,7 +557,7 @@ index 3345468..3be4a18 100644
          
          if (brightEffect) {
              SimpleColorShader &shader = shState->shaders().simpleColor;
-@@ -554,6 +559,127 @@ public:
+@@ -554,7 +559,136 @@ public:
          }
      }
      
@@ -625,9 +683,18 @@ index 3345468..3be4a18 100644
 +public:
 +    
      void requestViewportRender(const Vec4 &c, const Vec4 &f, const Vec4 &t) {
++        /* [yami] effects are drawn in screen coordinates: while a UI-layer
++         * element is drawn the GL viewport is the centred box, so restore the
++         * full screen here (the scissor box keeps its UI offset). */
++        struct ViewportGuard {
++            explicit ViewportGuard(const IntRect &r) { glState.viewport.pushSet(r); }
++            ~ViewportGuard() { glState.viewport.pop(); }
++        } viewportGuard(IntRect(0, 0, geometry.rect.w, geometry.rect.h));
++        
          const IntRect &viewpRect = glState.scissorBox.get();
          const IntRect &screenRect = geometry.rect;
-@@ -900,6 +1026,9 @@ struct GraphicsPrivate {
+         
+@@ -900,6 +1034,9 @@ struct GraphicsPrivate {
      }
      
      ~GraphicsPrivate() {
@@ -637,7 +704,7 @@ index 3345468..3be4a18 100644
          TEXFBO::fini(frozenScene);
          TEXFBO::fini(integerScaleBuffer);
          SDL_DestroyMutex(avgFPSLock);
-@@ -1030,9 +1159,86 @@ struct GraphicsPrivate {
+@@ -1030,9 +1167,86 @@ struct GraphicsPrivate {
      }
      
  private:
@@ -724,7 +791,7 @@ index 3345468..3be4a18 100644
          GLMeta::blitBeginScreen(screenSize, scaleIsSpecial);
          GLMeta::blitSource(source, scaleIsSpecial);
  
-@@ -1498,6 +1704,14 @@ int Graphics::displayHeight() const {
+@@ -1498,6 +1712,14 @@ int Graphics::displayHeight() const {
      return dm.h / p->backingScaleFactor;
  }
  
@@ -739,7 +806,7 @@ index 3345468..3be4a18 100644
  void Graphics::resizeScreen(int width, int height) {
      p->threadData->rqWindowAdjust.wait();
      p->checkResize(true);
-@@ -1530,7 +1744,22 @@ void Graphics::resizeScreen(int width, int height) {
+@@ -1530,7 +1752,22 @@ void Graphics::resizeScreen(int width, int height) {
      
      glState.scissorBox.set(IntRect(0, 0, p->scRes.x, p->scRes.y));
      
@@ -762,7 +829,7 @@ index 3345468..3be4a18 100644
  }
  
  void Graphics::resizeWindow(int width, int height, bool center) {
-@@ -1541,6 +1770,10 @@ void Graphics::resizeWindow(int width, int height, bool center) {
+@@ -1541,6 +1778,10 @@ void Graphics::resizeWindow(int width, int height, bool center) {
          height == p->winSize.y / p->backingScaleFactor)
              return;
  

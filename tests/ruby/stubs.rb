@@ -34,6 +34,11 @@ class Plane < Sprite; end
 module Graphics
   @w, @h, @rate, @skip, @updates = 640, 480, 40, false, 0
   class << self
+    attr_reader :ui_clip, :ambient
+    def yami_ui_clip(x, y, w, h); @ui_clip = [x, y, w, h]; end
+    def yami_ui_clip_off; @ui_clip = nil; end
+    def yami_ambient(x, w, d); @ambient = [x, w, d]; end
+    def yami_ambient_off; @ambient = nil; end
     attr_accessor :frame_rate, :frameskip
     attr_reader :updates
     def width; @w; end; def height; @h; end
