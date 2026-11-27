@@ -158,6 +158,20 @@ File.open("Graphics/Pictures/fresh.png", "wb") { |f| f.write("F") }
 check "file written through File.open is seen", File.file?("graphics/pictures/fresh.png") && File.size?("Graphics/Pictures/fresh.png") == 1
 Dir.mkdir("Graphics/Pictures/sub")
 check "mkdir clears answers", File.directory?("Graphics/Pictures/sub")
+# --- a write forgets only its own folder (no re-listing everything) ---
+Dir.mkdir("Saves") unless File.directory?("Saves")
+File.exist?("graphics/pictures/fresh.png")          # cache Graphics/Pictures
+cache = Yami::WinFS.instance_variable_get(:@cache)
+pics = cache.keys.find { |k| k.to_s.downcase.end_with?("graphics/pictures") }
+check "folder listing cached", pics
+File.exist?("Saves/Game.rxdata")
+File.open("Saves/Game.rxdata", "wb") { |f| f.write("S") }
+check "write elsewhere keeps the Graphics listing", cache.key?(pics)
+check "a new save is seen at once", File.exist?("Saves/Game.rxdata") && FileTest.exist?("saves/game.rxdata")
+File.delete("Saves/Game.rxdata")
+check "a deleted save is gone at once", !File.exist?("Saves/Game.rxdata")
+IO.write(File.join(Dir.tmpdir, "yami-status-test"), "fps=40\n")
+check "Yami's own status file doesn't touch the game's caches", cache.key?(pics)
 check "MiniFFI alias", MiniFFI == Win32API
 check "no message boxes", $msgboxes == 0
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")

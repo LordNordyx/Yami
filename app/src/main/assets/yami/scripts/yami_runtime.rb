@@ -66,7 +66,9 @@ module Yami
     @status[key] = value
     f = cfg("status_file")
     return unless f
-    File.open(f, "w") { |io| @status.each { |k, v| io.puts("#{k}=#{v}") } }
+    # IO.write, not File.*: Yami's own file must not go through the game's
+    # Windows file layer (whose caches every game write updates)
+    IO.write(f, @status.map { |k, v| "#{k}=#{v}\n" }.join)
   rescue StandardError
   end
 

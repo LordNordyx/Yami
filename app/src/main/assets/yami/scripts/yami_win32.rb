@@ -371,6 +371,26 @@ module Yami
     end
 
     def flush; @cache.clear; @resolved.clear; @answers.clear; end
+
+    # A file was written, created, deleted or renamed: forget only what
+    # involves its folder. Clearing everything made the game re-list its
+    # folders from storage (Graphics/Characters on an SD card: ~200 ms) after
+    # every write - and the overlay's status file is written every second.
+    def forget(*files)
+      dirs = files.filter_map do |f|
+        next unless path_arg?(f)
+        s = norm(f).to_s
+        r = @resolved[s] || s
+        [File.expand_path(File.dirname(s)), File.expand_path(File.dirname(r.to_s))]
+      end.flatten.uniq
+      return flush if dirs.empty?
+      in_dirs = ->(p) { dirs.include?(File.expand_path(File.dirname(p.to_s))) }
+      @cache.delete_if { |k, _| dirs.include?(File.expand_path(k.to_s)) }
+      @resolved.delete_if { |k, v| in_dirs.(v) || in_dirs.(k) }
+      @answers.each_value { |h| h.delete_if { |k, _| in_dirs.(k) || dirs.include?(File.expand_path(k.to_s)) } }
+    rescue StandardError
+      flush
+    end
     @resolved = {}
 
     # Answers to existence queries (exist?, file?, directory?, ...) per
@@ -466,7 +486,7 @@ module Yami
         if Yami::WinFS.path_arg?(a[0])
           a[0] = Yami::WinFS.resolve(a[0])
           if Yami::WinFS.writes?(a[1] || k[:mode])
-            Yami::WinFS.flush
+            Yami::WinFS.forget(a[0])
           else
             Yami::WinFS.dir_as_file!(a[0])
           end
@@ -498,13 +518,13 @@ module Yami
     WRITES.each do |m|
       define_method(m) do |*a, **k, &b|
         a.map! { |f| Yami::WinFS.path_arg?(f) ? Yami::WinFS.resolve(f) : f }
-        Yami::WinFS.flush
+        Yami::WinFS.forget(*a.select { |f| Yami::WinFS.path_arg?(f) })
         k.empty? ? super(*a, &b) : super(*a, **k, &b)
       end
     end
     define_method(:rename) do |from, to|
-      Yami::WinFS.flush
-      super(Yami::WinFS.resolve(from), Yami::WinFS.resolve(to)).tap { Yami::WinFS.flush }
+      Yami::WinFS.forget(from, to)
+      super(Yami::WinFS.resolve(from), Yami::WinFS.resolve(to)).tap { Yami::WinFS.forget(from, to) }
     end
     PURE.each do |m|
       define_method(m) { |f, *a| super(Yami::WinFS.norm(f), *a) }
@@ -549,8 +569,8 @@ module Yami
     %i[mkdir rmdir delete unlink].each do |m|
       define_method(m) do |*a, &b|
         a[0] = Yami::WinFS.resolve(a[0]) if Yami::WinFS.path_arg?(a[0])
-        Yami::WinFS.flush
-        super(*a, &b).tap { Yami::WinFS.flush }
+        Yami::WinFS.forget(a[0])
+        super(*a, &b).tap { Yami::WinFS.forget(a[0]) }
       end
     end
     %i[glob []].each do |m|
