@@ -139,11 +139,35 @@ module Yami
   end
 end
 
+# Frame profile for the session log: what a long frame was spent on.
+module Yami
+  module Prof
+    @acc = Hash.new(0.0)
+    @cnt = Hash.new(0)
+    @draw = 0.0
+    class << self
+      attr_reader :acc, :cnt
+      attr_accessor :draw
+      def measure(key)
+        t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        yield
+      ensure
+        @acc[key] += Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+        @cnt[key] += 1
+      end
+      def reset; @acc.clear; @cnt.clear; end
+    end
+  end
+end
+
 class << Graphics
   alias_method :yami_update, :update
   def update(*args)
     Yami.tick
-    yami_update(*args)
+    t = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    r = yami_update(*args)
+    Yami::Prof.draw = Process.clock_gettime(Process::CLOCK_MONOTONIC) - t
+    r
   end
 end
 
@@ -265,6 +289,10 @@ end
 
 alias yami_load_data load_data
 def load_data(path, *rest)
+  Yami::Prof.measure(:load_data) { yami_load_data_inner(path, *rest) }
+end
+
+def yami_load_data_inner(path, *rest)
   return yami_load_data(path, *rest) if !path.is_a?(String) || rest.first == true
   key = Yami.norm(path)
   if Yami::OptMaps.enabled? && (opt = Yami::OptMaps.lookup(key))
@@ -395,10 +423,19 @@ module Yami
         h[:n] += 1
         h[:gc] += 1 if gc != @last_gc
         h[:worst] = dt if dt > h[:worst]
+        # breakdown of the long frame (at most one line a second)
+        if !@last_detail || now - @last_detail >= 1.0
+          @last_detail = now
+          draw = Prof.draw.to_f
+          parts = Prof.acc.sort_by { |_, v| -v }.map { |k, v| format("%s %.0f ms x%d", k, v * 1000, Prof.cnt[k]) }
+          log(format("long frame %.0f ms: game %.0f ms, draw+wait %.0f ms%s%s", dt * 1000, (dt - draw) * 1000,
+                     draw * 1000, gc != @last_gc ? ", GC" : "", parts.empty? ? "" : " | " + parts.join(", ")))
+        end
       end
     end
     @last_frame_t = now
     @last_gc = gc
+    Prof.reset
     h[:t] ||= now
     return if now - h[:t] < 10
     log(format("frames: %d long of %d (%d with GC), worst %.0f ms", h[:n], h[:frames], h[:gc], h[:worst] * 1000)) if h[:frames] > 0
@@ -857,26 +894,69 @@ module Yami::NativeTilemap
     def yami_build(ts, md)
       yami_drop_compact
       xs, ys, zs = md.xsize, md.ysize, md.zsize
-      rows = {}
       max_row = ts.height / 32
+      fast = Yami::Prof.measure(:compact_tileset) { yami_build_fast(md, max_row) } rescue nil
+      if fast
+        rows, cmd = fast
+      else
+        rows, cmd = yami_build_slow(md, max_row)
+      end
+      cts = Bitmap.new(256, [rows.size, 1].max * 32)
+      rows.each { |old, nw| cts.blt(0, nw * 32, ts, Rect.new(0, old * 32, 256, 32)) }
+      @yami_rows = rows
+      @yami_cts, @yami_cmd, @yami_key = cts, cmd, [ts.object_id, md.object_id]
+      @yami_md_dims = zs > 1 ? 4 : (ys > 1 ? 3 : 2)
+      @yami_cpr_src = nil
+      Yami.log("map renderer: compact tileset #{rows.size} rows (#{rows.size * 32}px of #{ts.height}px)#{fast ? '' : ' (slow path)'}")
+    end
+
+    # The whole map in a few native array operations (a map loaded while
+    # walking - Essentials' connected maps - must not cost a frame): the
+    # engine Table's serialized form is 5 int32 + int16 cells.
+    def yami_build_fast(md, max_row)
+      if md.respond_to?(:yami_remap_rows) && ::Table.respond_to?(:_load)
+        order, data = md.yami_remap_rows(max_row)   # native, one pass
+        rows = {}
+        order.each { |r| rows[r] = rows.size }
+        return [rows, ::Table._load(data)]
+      end
+      return nil unless md.respond_to?(:_dump) && ::Table.respond_to?(:_load)
+      bin = md._dump(-1)
+      hdr = bin.byteslice(0, 20)
+      ids = bin.byteslice(20, bin.bytesize - 20).unpack("s<*")
+      return nil unless ids.size == md.xsize * md.ysize * md.zsize
+      tiles = ids.uniq.select { |i| i >= 384 }
+      used = tiles.map { |i| (i - 384) >> 3 }.uniq.select { |r| r < max_row }.sort
+      rows = {}
+      used.each { |r| rows[r] = rows.size }
+      top = [ids.max || 0, 383].max
+      lut = Array.new(top + 1) { |i| i }
+      tiles.each do |i|
+        r = rows[(i - 384) >> 3]
+        lut[i] = r ? 384 + (r << 3) + ((i - 384) & 7) : 0
+      end
+      ids.each_with_index { |i, k| ids[k] = 0 if i < 0 } if ids.min.to_i < 0
+      out = []
+      ids.each_slice(8192) { |sl| out.concat(lut.values_at(*sl)) }
+      [rows, ::Table._load(hdr + out.pack("s<*"))]
+    end
+
+    def yami_build_slow(md, max_row)
+      xs, ys, zs = md.xsize, md.ysize, md.zsize
+      rows = {}
       zs.times do |z| ys.times do |y| xs.times do |x|
         id = md[x, y, z]
         next if id.nil? || id < 384
         r = (id - 384) >> 3
         rows[r] = rows.size if r < max_row && !rows.key?(r)
       end end end
-      cts = Bitmap.new(256, [rows.size, 1].max * 32)
-      rows.each { |old, nw| cts.blt(0, nw * 32, ts, Rect.new(0, old * 32, 256, 32)) }
       @yami_rows = rows
       cmd = Table.new(xs, ys, zs)
       zs.times do |z| ys.times do |y| xs.times do |x|
         id = md[x, y, z] || 0
         cmd[x, y, z] = (id >= 384 && !rows.key?((id - 384) >> 3)) ? 0 : yami_map_id(id)
       end end end
-      @yami_cts, @yami_cmd, @yami_key = cts, cmd, [ts.object_id, md.object_id]
-      @yami_md_dims = zs > 1 ? 4 : (ys > 1 ? 3 : 2)
-      @yami_cpr_src = nil
-      Yami.log("map renderer: compact tileset #{rows.size} rows (#{rows.size * 32}px of #{ts.height}px)")
+      [rows, cmd]
     end
 
     def yami_priorities(pr)
@@ -1508,8 +1588,12 @@ if Yami::Wide.on?
       Bitmap.instance_variable_set(:@yami_hooked, true)
       binit = Bitmap.instance_method(:initialize)
       Bitmap.send(:define_method, :initialize) do |*a, &b|
-        binit.bind(self).call(*a, &b)
-        @yami_file = true if a.size == 1 && a[0].is_a?(String)
+        if a.size == 1 && a[0].is_a?(String)
+          Yami::Prof.measure(:image_load) { binit.bind(self).call(*a, &b) }
+          @yami_file = true
+        else
+          binit.bind(self).call(*a, &b)
+        end
       end
     end
 
@@ -1612,5 +1696,16 @@ unless Yami.cfg("mode") == "optimize"
   Yami.on_tick { $yami_boot_frames += 1 }
   Yami.once_when(-> { $yami_boot_frames >= 180 }) { Yami::MapCache.start }
 end
+# Frame profile: map setup and map sprites (Essentials loads connected maps
+# while you walk)
+Yami.once_when(-> { defined?(Game_Map) && defined?(Spriteset_Map) }) do
+  [[Game_Map, :setup, :map_setup], [Spriteset_Map, :initialize, :map_sprites]].each do |klass, m, key|
+    next unless klass.method_defined?(m) || klass.private_method_defined?(m)
+    klass.prepend(Module.new do
+      define_method(m) { |*a, &b| Yami::Prof.measure(key) { super(*a, &b) } }
+    end)
+  end
+end
+
 Yami.status("turbo", 0)
 Yami.log("runtime #{Yami::VERSION} ready (rgss #{Yami.rgss}, widescreen=#{Yami::Wide.mode})")

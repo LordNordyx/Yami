@@ -51,6 +51,40 @@ index b6344f9..fe5f62e 100644
              if (state)
                  break;
          }
+diff --git a/binding/filesystem-binding.cpp b/binding/filesystem-binding.cpp
+index 9c479a0..fb9829f 100644
+--- a/binding/filesystem-binding.cpp
++++ b/binding/filesystem-binding.cpp
+@@ -163,6 +163,19 @@ VALUE
+ kernelLoadDataInt(const char *filename, bool rubyExc, bool raw) {
+     //rb_gc_start();
+     
++    /* Yami: Data/ files read into memory ahead of time (map transfers
++     * without a trip to storage) */
++    {
++        std::string bytes;
++        if (shState->fileSystem().yamiCachedData(filename, bytes)) {
++            VALUE data = rb_str_new(bytes.data(), (long)bytes.size());
++            if (raw)
++                return data;
++            VALUE marsh = rb_const_get(rb_cObject, rb_intern("Marshal"));
++            return rb_funcall2(marsh, rb_intern("load"), 1, &data);
++        }
++    }
++
+     VALUE port = fileIntForPath(filename, rubyExc);
+     VALUE result;
+     if (!raw) {
+@@ -202,6 +215,9 @@ RB_METHOD(kernelSaveData) {
+     
+     rb_get_args(argc, argv, "oS", &obj, &filename RB_ARG_END);
+     
++    /* Yami: never serve the old contents from memory afterwards */
++    shState->fileSystem().yamiForgetData(RSTRING_PTR(filename));
++    
+     VALUE file = rb_file_open_str(filename, "wb");
+     
+     VALUE marsh = rb_const_get(rb_cObject, rb_intern("Marshal"));
 diff --git a/binding/graphics-binding.cpp b/binding/graphics-binding.cpp
 index 894163b..f7142ba 100644
 --- a/binding/graphics-binding.cpp
@@ -174,6 +208,76 @@ index 096464e..b5650e0 100644
      
      INIT_PROP_BIND(Sprite, Bitmap, "bitmap");
      INIT_PROP_BIND(Sprite, SrcRect, "src_rect");
+diff --git a/binding/table-binding.cpp b/binding/table-binding.cpp
+index 770514a..6b80ebe 100644
+--- a/binding/table-binding.cpp
++++ b/binding/table-binding.cpp
+@@ -154,6 +154,57 @@ RB_METHOD_GUARD(tableSetAt) {
+ }
+ RB_METHOD_GUARD_END
+ 
++/* Yami: compact-tileset remap for the GPU map renderer. Rows of the tileset
++ * (8 tiles each, ids >= 384) used by this map get consecutive new rows in
++ * first-seen order; rows at or past maxRow become 0. Returns [rows, data]:
++ * the old row of each new row, and the remapped table in Table._load form.
++ * One native pass instead of tens of thousands of Ruby calls per map load. */
++RB_METHOD(tableYamiRemapRows) {
++  RB_UNUSED_PARAM;
++  Table *t = getPrivateData<Table>(self);
++  int maxRow = argc > 0 ? NUM2INT(argv[0]) : 0;
++  if (maxRow < 0)
++    maxRow = 0;
++  const int xs = t->xSize(), ys = t->ySize(), zs = t->zSize();
++  std::vector<int> newRow((size_t)maxRow, -1);
++  std::vector<int> order;
++  for (int z = 0; z < zs; ++z)
++    for (int y = 0; y < ys; ++y)
++      for (int x = 0; x < xs; ++x) {
++        int id = t->at(x, y, z);
++        if (id < 384)
++          continue;
++        int r = (id - 384) >> 3;
++        if (r < maxRow && newRow[r] < 0) {
++          newRow[r] = (int)order.size();
++          order.push_back(r);
++        }
++      }
++  Table out(xs, ys, zs);
++  for (int z = 0; z < zs; ++z)
++    for (int y = 0; y < ys; ++y)
++      for (int x = 0; x < xs; ++x) {
++        int id = t->at(x, y, z);
++        int v = id;
++        if (id >= 384) {
++          int r = (id - 384) >> 3;
++          v = (r < maxRow && newRow[r] >= 0) ? 384 + (newRow[r] << 3) + ((id - 384) & 7) : 0;
++        } else if (id < 0) {
++          v = 0;
++        }
++        out.at(x, y, z) = (int16_t)v;
++      }
++  VALUE rows = rb_ary_new_capa((long)order.size());
++  for (size_t i = 0; i < order.size(); ++i)
++    rb_ary_push(rows, INT2NUM(order[i]));
++  VALUE data = rb_str_new(0, out.serialSize());
++  out.serialize(RSTRING_PTR(data));
++  VALUE pair = rb_ary_new_capa(2);
++  rb_ary_push(pair, rows);
++  rb_ary_push(pair, data);
++  return pair;
++}
++
+ MARSH_LOAD_FUN(Table)
+ INITCOPY_FUN(Table)
+ 
+@@ -179,6 +230,7 @@ void tableBindingInit() {
+   _rb_define_method(klass, "initialize", tableInitialize);
+   _rb_define_method(klass, "initialize_copy", TableInitializeCopy);
+   _rb_define_method(klass, "resize", tableResize);
++  _rb_define_method(klass, "yami_remap_rows", tableYamiRemapRows);
+   _rb_define_method(klass, "xsize", tableXSize);
+   _rb_define_method(klass, "ysize", tableYSize);
+   _rb_define_method(klass, "zsize", tableZSize);
 diff --git a/binding/viewport-binding.cpp b/binding/viewport-binding.cpp
 index f1c754b..0c851b9 100644
 --- a/binding/viewport-binding.cpp
@@ -1086,10 +1190,10 @@ index 29b3219..7a224b7 100644
  	Scene::composite();
  
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
-index 67c9be0..d6d381d 100644
+index 67c9be0..907f8de 100644
 --- a/src/filesystem/filesystem.cpp
 +++ b/src/filesystem/filesystem.cpp
-@@ -32,10 +32,20 @@
+@@ -32,10 +32,21 @@
  #include "sharedstate.h"
  
  #include <physfs.h>
@@ -1099,6 +1203,7 @@ index 67c9be0..d6d381d 100644
 +#include <mutex>
 +#include <thread>
 +#include <unordered_map>
++#include <unordered_set>
 +#ifdef __ANDROID__
 +#include <sys/resource.h>
 +#endif
@@ -1110,7 +1215,7 @@ index 67c9be0..d6d381d 100644
  #include <string.h>
  #include <unistd.h>
  #include <vector>
-@@ -278,6 +288,9 @@ struct FileSystemPrivate {
+@@ -278,6 +289,9 @@ struct FileSystemPrivate {
    /* This is for compatibility with games that take Windows'
     * case insensitivity for granted */
    bool havePathCache;
@@ -1120,7 +1225,7 @@ index 67c9be0..d6d381d 100644
  };
  
  static void throwPhysfsError(const char *desc) {
-@@ -295,6 +308,12 @@ static void throwPhysfsError(const char *desc) {
+@@ -295,6 +309,12 @@ static void throwPhysfsError(const char *desc) {
  }
  
  FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
@@ -1133,7 +1238,7 @@ index 67c9be0..d6d381d 100644
    if (PHYSFS_init(argv0) == 0)
      throwPhysfsError("Error initializing PhysFS");
  
-@@ -316,7 +335,10 @@ FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
+@@ -316,7 +336,10 @@ FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
      PHYSFS_permitSymbolicLinks(1);
  }
  
@@ -1144,7 +1249,7 @@ index 67c9be0..d6d381d 100644
    delete p;
  
    if (PHYSFS_deinit() == 0)
-@@ -418,6 +440,7 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+@@ -418,6 +441,7 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
    PHYSFS_stat(fullPath, &stat);
  
    if (stat.filetype == PHYSFS_FILETYPE_DIRECTORY) {
@@ -1152,7 +1257,7 @@ index 67c9be0..d6d381d 100644
      /* Create a new list for this directory */
      std::vector<std::string> &list = data.p->fileLists[lowerCase];
  
-@@ -441,9 +464,119 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+@@ -441,9 +465,119 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
    return PHYSFS_ENUM_OK;
  }
  
@@ -1272,7 +1377,7 @@ index 67c9be0..d6d381d 100644
    CacheEnumData data(p);
    data.fileLists.push(&p->fileLists[""]);
    PHYSFS_enumerate("", cacheEnumCB, &data);
-@@ -451,6 +584,7 @@ void FileSystem::createPathCache() {
+@@ -451,6 +585,7 @@ void FileSystem::createPathCache() {
    p->havePathCache = true;
  
    Debug() << "Path cache completed.";
@@ -1280,7 +1385,7 @@ index 67c9be0..d6d381d 100644
  }
  
  void FileSystem::reloadPathCache() {
-@@ -458,6 +592,10 @@ void FileSystem::reloadPathCache() {
+@@ -458,6 +593,10 @@ void FileSystem::reloadPathCache() {
      
      p->fileLists.clear();
      p->pathCache.clear();
@@ -1291,7 +1396,7 @@ index 67c9be0..d6d381d 100644
      createPathCache();
  }
  
-@@ -690,3 +828,141 @@ const char *FileSystem::desensitize(const char *filename) {
+@@ -690,3 +829,221 @@ const char *FileSystem::desensitize(const char *filename) {
      return p->pathCache[fn_lower].c_str();
    return filename;
  }
@@ -1312,6 +1417,11 @@ index 67c9be0..d6d381d 100644
 +  std::atomic<bool> stop{false};
 +  std::atomic<bool> started{false};
 +  std::thread worker;
++  /* raw bytes of Data/ files */
++  std::unordered_map<std::string, std::string> data;
++  size_t dataBytes = 0;
++  /* written by the game since start: never served from memory */
++  std::unordered_set<std::string> dirty;
 +};
 +YamiImageCache yamiImg;
 +
@@ -1343,10 +1453,42 @@ index 67c9be0..d6d381d 100644
 +  return std::min(b, (size_t)512 << 20);
 +}
 +
-+void yamiImageWorker(std::vector<std::string> files) {
++/* Data/ first (map transfers read them), then character graphics */
++void yamiDataWorker(const std::vector<std::string> &files) {
++  size_t budget = std::min(yamiImg.budget / 2, (size_t)256 << 20);
++  size_t n = 0;
++  for (size_t i = 0; i < files.size() && !yamiImg.stop; ++i) {
++    PHYSFS_File *fh = PHYSFS_openRead(files[i].c_str());
++    if (!fh)
++      continue;
++    PHYSFS_sint64 len = PHYSFS_fileLength(fh);
++    if (len <= 0 || (size_t)len > budget) {
++      PHYSFS_close(fh);
++      continue;
++    }
++    std::string buf((size_t)len, '\0');
++    PHYSFS_sint64 got = PHYSFS_readBytes(fh, &buf[0], (PHYSFS_uint64)len);
++    PHYSFS_close(fh);
++    if (got != len)
++      continue;
++    std::lock_guard<std::mutex> lk(yamiImg.mtx);
++    if (yamiImg.dataBytes + (size_t)len > budget)
++      break;
++    std::string key = yamiImageKey(files[i].c_str());
++    if (yamiImg.data.count(key) || yamiImg.dirty.count(key))
++      continue; /* saved by the game meanwhile: the file is newer */
++    yamiImg.dataBytes += (size_t)len;
++    yamiImg.data[key].swap(buf);
++    ++n;
++  }
++  Debug() << "Data cache:" << n << "files," << (int)(yamiImg.dataBytes >> 20) << "MB";
++}
++
++void yamiImageWorker(std::vector<std::string> dataFiles, std::vector<std::string> files) {
 +#ifdef __ANDROID__
 +  setpriority(PRIO_PROCESS, gettid(), 10);
 +#endif
++  yamiDataWorker(dataFiles);
 +  size_t loaded = 0;
 +  for (size_t i = 0; i < files.size() && !yamiImg.stop; ++i) {
 +    const std::string &path = files[i];
@@ -1403,27 +1545,70 @@ index 67c9be0..d6d381d 100644
 +    SDL_FreeSurface(e.second);
 +  yamiImg.map.clear();
 +  yamiImg.bytes = 0;
++  yamiImg.data.clear();
++  yamiImg.dataBytes = 0;
++}
++
++static void yamiStartPrefetch(FileSystemPrivate *p) {
++  if (yamiImg.started.exchange(true))
++    return;
++  yamiImg.budget = yamiImageBudget();
++  if (yamiImg.budget == 0 || !p->havePathCache)
++    return;
++  std::vector<std::string> files, dataFiles;
++  static const char prefix[] = "graphics/characters/";
++  static const char dprefix[] = "data/";
++  for (BoostHash<std::string, std::string>::const_iterator it = p->pathCache.cbegin();
++       it != p->pathCache.cend(); ++it) {
++    const std::string &lower = it->first;
++    size_t n = lower.size();
++    if (lower.compare(0, sizeof(dprefix) - 1, dprefix) == 0) {
++      /* maps, tilesets, events... (not the script pack: read once at boot) */
++      if (lower.find("scripts") == std::string::npos &&
++          (lower.compare(n - 7, 7, ".rxdata") == 0 || lower.compare(n - 7, 7, ".rvdata") == 0 ||
++           (n > 8 && lower.compare(n - 8, 8, ".rvdata2") == 0)))
++        dataFiles.push_back(it->second);
++      continue;
++    }
++    if (lower.compare(0, sizeof(prefix) - 1, prefix) != 0)
++      continue;
++    if (n > 4 && lower.compare(n - 4, 4, ".png") == 0)
++      files.push_back(it->second);
++  }
++  /* maps in name order: neighbours are usually numbered close together */
++  std::sort(dataFiles.begin(), dataFiles.end());
++  if (!files.empty() || !dataFiles.empty())
++    yamiImg.worker = std::thread(yamiImageWorker, std::move(dataFiles), std::move(files));
++}
++
++bool FileSystem::yamiCachedData(const char *filename, std::string &out) {
++  yamiStartPrefetch(p);
++  if (!filename || !*filename)
++    return false;
++  const std::string key = yamiImageKey(filename);
++  std::lock_guard<std::mutex> lk(yamiImg.mtx);
++  auto it = yamiImg.data.find(key);
++  if (it == yamiImg.data.end())
++    return false;
++  out = it->second;
++  return true;
++}
++
++void FileSystem::yamiForgetData(const char *filename) {
++  if (!filename || !*filename)
++    return;
++  const std::string key = yamiImageKey(filename);
++  std::lock_guard<std::mutex> lk(yamiImg.mtx);
++  yamiImg.dirty.insert(key);
++  auto it = yamiImg.data.find(key);
++  if (it == yamiImg.data.end())
++    return;
++  yamiImg.dataBytes -= it->second.size();
++  yamiImg.data.erase(it);
 +}
 +
 +SDL_Surface *FileSystem::yamiCachedImage(const char *filename) {
-+  if (!yamiImg.started.exchange(true)) {
-+    yamiImg.budget = yamiImageBudget();
-+    if (yamiImg.budget > 0 && p->havePathCache) {
-+      std::vector<std::string> files;
-+      static const char prefix[] = "graphics/characters/";
-+      for (BoostHash<std::string, std::string>::const_iterator it = p->pathCache.cbegin();
-+           it != p->pathCache.cend(); ++it) {
-+        const std::string &lower = it->first;
-+        if (lower.compare(0, sizeof(prefix) - 1, prefix) != 0)
-+          continue;
-+        size_t n = lower.size();
-+        if (n > 4 && lower.compare(n - 4, 4, ".png") == 0)
-+          files.push_back(it->second);
-+      }
-+      if (!files.empty())
-+        yamiImg.worker = std::thread(yamiImageWorker, std::move(files));
-+    }
-+  }
++  yamiStartPrefetch(p);
 +  if (!filename || !*filename)
 +    return 0;
 +  const std::string key = yamiImageKey(filename);
@@ -1434,10 +1619,10 @@ index 67c9be0..d6d381d 100644
 +  return SDL_DuplicateSurface(it->second);
 +}
 diff --git a/src/filesystem/filesystem.h b/src/filesystem/filesystem.h
-index 834a394..225cc4a 100644
+index 834a394..79e3a13 100644
 --- a/src/filesystem/filesystem.h
 +++ b/src/filesystem/filesystem.h
-@@ -74,6 +74,11 @@ public:
+@@ -74,6 +74,16 @@ public:
  
  	std::string normalize(const char *pathname, bool preferred, bool absolute);
  
@@ -1445,6 +1630,11 @@ index 834a394..225cc4a 100644
 +	 * time on a background thread; returns a copy of the decoded surface
 +	 * (ABGR8888, caller owns it) or 0. */
 +	SDL_Surface *yamiCachedImage(const char *filename);
++
++	/* Yami: game data files (Data/: maps, tilesets...) read into memory
++	 * ahead of time. Copies the file into out and returns true if cached. */
++	bool yamiCachedData(const char *filename, std::string &out);
++	void yamiForgetData(const char *filename);
 +
  	/* Does not perform extension supplementing */
  	bool exists(const char *filename);

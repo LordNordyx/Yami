@@ -24,6 +24,30 @@ class Table
   def initialize(x, y = 1, z = 1); @xsize, @ysize, @zsize = x, y, z; @d = Array.new(x * y * z, 0); end
   def [](x, y = 0, z = 0); @d[x + y * @xsize + z * @xsize * @ysize]; end
   def []=(*a); v = a.pop; x, y, z = a; @d[x + (y || 0) * @xsize + (z || 0) * @xsize * @ysize] = v; end
+  # the engine's serialized form: dim, xsize, ysize, zsize, size (int32) + int16 cells
+  def _dump(_d = -1)
+    dim = @zsize > 1 ? 3 : (@ysize > 1 ? 2 : 1)
+    [dim, @xsize, @ysize, @zsize, @d.size].pack("l<5") + @d.pack("s<*")
+  end
+  # the engine's native remap (Yami patch): [old row per new row, _load data]
+  def yami_remap_rows(max_row)
+    newr = {}; order = []
+    @d.each do |id|
+      next if id < 384
+      r = (id - 384) >> 3
+      next unless r < max_row && !newr.key?(r)
+      newr[r] = order.size; order << r
+    end
+    out = @d.map { |id| id < 0 ? 0 : id < 384 ? id : (n = newr[(id - 384) >> 3]) ? 384 + (n << 3) + ((id - 384) & 7) : 0 }
+    t = Table.new(@xsize, @ysize, @zsize); t.instance_variable_set(:@d, out)
+    [order, t._dump]
+  end
+  def self._load(str)
+    _dim, x, y, z, n = str.unpack("l<5")
+    t = new(x, y, z)
+    t.instance_variable_set(:@d, str.byteslice(20, n * 2).unpack("s<*"))
+    t
+  end
 end
 
 class Font
