@@ -111,6 +111,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         Os.setenv("YAMI_CFG", prepared.cfgFile.absolutePath, true)
         Os.setenv("YAMI_DATA_DIR", prepared.dataDir.absolutePath, true)
         Os.setenv("SDL_ANDROID_TRAP_BACK_BUTTON", "1", true)
+        // Decoded-image cache in the engine ("" = automatic budget, 0 = off)
+        Os.setenv("YAMI_IMAGE_CACHE_MB", if (settings.graphicsCache) "" else "0", true)
         // Ruby GC: Essentials allocates heavily every frame; a bigger starting
         // heap and malloc limits mean far fewer collections (each one a hitch).
         mapOf(

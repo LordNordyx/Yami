@@ -84,6 +84,8 @@ data class GameSettings(
     val warmGraphics: Boolean = false,
     /** Draw maps with the engine's GPU tilemap instead of the game's Ruby one. */
     val gpuMaps: Boolean = true,
+    /** Decode character graphics ahead of time (no hitch when a sprite appears). */
+    val graphicsCache: Boolean = true,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,

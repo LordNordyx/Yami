@@ -363,10 +363,26 @@ index ae7c535..83106b0 100644
      double framebufferScalingFactor;
      double atlasScalingFactor;
 diff --git a/src/display/bitmap.cpp b/src/display/bitmap.cpp
-index 7500a0a..29dbba3 100644
+index 7500a0a..b70828f 100644
 --- a/src/display/bitmap.cpp
 +++ b/src/display/bitmap.cpp
-@@ -3390,8 +3390,8 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
+@@ -581,6 +581,15 @@ Bitmap::Bitmap(const char *filename)
+         }
+     }
+ 
++    /* Yami: character graphics decoded ahead of time (no file access or
++     * PNG decode in the middle of a frame) */
++    if (!hiresBitmap) {
++        if (SDL_Surface *cached = shState->fileSystem().yamiCachedImage(filename)) {
++            initFromSurface(cached, nullptr, false);
++            return;
++        }
++    }
++
+     BitmapOpenHandler handler;
+     try {
+         shState->fileSystem().openRead(handler, filename);
+@@ -3390,8 +3399,8 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
                                            txtSurf->w - scaledOutlineSize,
                                            outline->w - doubleOutlineSize
                                           }) + outlineCropUndo,
@@ -377,7 +393,7 @@ index 7500a0a..29dbba3 100644
                                            outline->h - doubleOutlineSize
                                           }) + outlineCropUndo};
          SDL_Rect outRect = {doubleOutlineSize - outlineCropUndo, doubleOutlineSize - outlineCropUndo, 0, 0};
-@@ -3401,14 +3401,34 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
+@@ -3401,14 +3410,34 @@ void Bitmap::drawText(const IntRect &rect, const char *str, int align)
          txtSurf = outline;
      }
      
@@ -996,10 +1012,23 @@ index 29b3219..7a224b7 100644
  	Scene::composite();
  
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
-index 67c9be0..a95edbe 100644
+index 67c9be0..d6d381d 100644
 --- a/src/filesystem/filesystem.cpp
 +++ b/src/filesystem/filesystem.cpp
-@@ -36,6 +36,7 @@
+@@ -32,10 +32,20 @@
+ #include "sharedstate.h"
+ 
+ #include <physfs.h>
++#include <SDL_image.h>
++
++#include <atomic>
++#include <mutex>
++#include <thread>
++#include <unordered_map>
++#ifdef __ANDROID__
++#include <sys/resource.h>
++#endif
+ 
  #include <algorithm>
  #include <stack>
  #include <stdio.h>
@@ -1007,7 +1036,7 @@ index 67c9be0..a95edbe 100644
  #include <string.h>
  #include <unistd.h>
  #include <vector>
-@@ -278,6 +279,9 @@ struct FileSystemPrivate {
+@@ -278,6 +288,9 @@ struct FileSystemPrivate {
    /* This is for compatibility with games that take Windows'
     * case insensitivity for granted */
    bool havePathCache;
@@ -1017,7 +1046,7 @@ index 67c9be0..a95edbe 100644
  };
  
  static void throwPhysfsError(const char *desc) {
-@@ -295,6 +299,12 @@ static void throwPhysfsError(const char *desc) {
+@@ -295,6 +308,12 @@ static void throwPhysfsError(const char *desc) {
  }
  
  FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
@@ -1030,7 +1059,18 @@ index 67c9be0..a95edbe 100644
    if (PHYSFS_init(argv0) == 0)
      throwPhysfsError("Error initializing PhysFS");
  
-@@ -418,6 +428,7 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+@@ -316,7 +335,10 @@ FileSystem::FileSystem(const char *argv0, bool allowSymlinks) {
+     PHYSFS_permitSymbolicLinks(1);
+ }
+ 
++static void yamiImageCacheShutdown();
++
+ FileSystem::~FileSystem() {
++  yamiImageCacheShutdown();
+   delete p;
+ 
+   if (PHYSFS_deinit() == 0)
+@@ -418,6 +440,7 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
    PHYSFS_stat(fullPath, &stat);
  
    if (stat.filetype == PHYSFS_FILETYPE_DIRECTORY) {
@@ -1038,7 +1078,7 @@ index 67c9be0..a95edbe 100644
      /* Create a new list for this directory */
      std::vector<std::string> &list = data.p->fileLists[lowerCase];
  
-@@ -441,9 +452,119 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
+@@ -441,9 +464,119 @@ static PHYSFS_EnumerateCallbackResult cacheEnumCB(void *d, const char *origdir,
    return PHYSFS_ENUM_OK;
  }
  
@@ -1158,7 +1198,7 @@ index 67c9be0..a95edbe 100644
    CacheEnumData data(p);
    data.fileLists.push(&p->fileLists[""]);
    PHYSFS_enumerate("", cacheEnumCB, &data);
-@@ -451,6 +572,7 @@ void FileSystem::createPathCache() {
+@@ -451,6 +584,7 @@ void FileSystem::createPathCache() {
    p->havePathCache = true;
  
    Debug() << "Path cache completed.";
@@ -1166,7 +1206,7 @@ index 67c9be0..a95edbe 100644
  }
  
  void FileSystem::reloadPathCache() {
-@@ -458,6 +580,10 @@ void FileSystem::reloadPathCache() {
+@@ -458,6 +592,10 @@ void FileSystem::reloadPathCache() {
      
      p->fileLists.clear();
      p->pathCache.clear();
@@ -1176,6 +1216,164 @@ index 67c9be0..a95edbe 100644
 +      remove(fn.c_str());
      createPathCache();
  }
+ 
+@@ -690,3 +828,141 @@ const char *FileSystem::desensitize(const char *filename) {
+     return p->pathCache[fn_lower].c_str();
+   return filename;
+ }
++
++
++/* ===== Yami: decoded-image cache =========================================
++ * Games load character graphics the moment a sprite appears (overworld
++ * Pokémon, followers, NPCs): open through Android's shared-storage layer,
++ * PNG decode and upload in the middle of a frame (visible hitch). A low
++ * priority thread decodes Graphics/Characters ahead of time within a memory
++ * budget; a load then costs a memcpy and the texture upload. */
++namespace {
++struct YamiImageCache {
++  std::mutex mtx;
++  std::unordered_map<std::string, SDL_Surface *> map;
++  size_t bytes = 0;
++  size_t budget = 0;
++  std::atomic<bool> stop{false};
++  std::atomic<bool> started{false};
++  std::thread worker;
++};
++YamiImageCache yamiImg;
++
++std::string yamiImageKey(const char *filename) {
++  std::string k(filename);
++  for (size_t i = 0; i < k.size(); ++i) {
++    char c = k[i];
++    k[i] = c == '\\' ? '/' : (char)tolower((unsigned char)c);
++  }
++  size_t slash = k.rfind('/');
++  size_t dot = k.rfind('.');
++  if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
++    std::string ext = k.substr(dot + 1);
++    if (ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp")
++      k.erase(dot);
++  }
++  while (k.compare(0, 2, "./") == 0)
++    k.erase(0, 2);
++  return k;
++}
++
++size_t yamiImageBudget() {
++  const char *env = getenv("YAMI_IMAGE_CACHE_MB");
++  if (env && *env)
++    return (size_t)std::max(0L, strtol(env, 0, 10)) * 1024 * 1024;
++  long pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
++  size_t ram = (pages > 0 && psize > 0) ? (size_t)pages * (size_t)psize : (size_t)2048 << 20;
++  size_t b = ram / 4;
++  return std::min(b, (size_t)512 << 20);
++}
++
++void yamiImageWorker(std::vector<std::string> files) {
++#ifdef __ANDROID__
++  setpriority(PRIO_PROCESS, gettid(), 10);
++#endif
++  size_t loaded = 0;
++  for (size_t i = 0; i < files.size() && !yamiImg.stop; ++i) {
++    const std::string &path = files[i];
++    const std::string key = yamiImageKey(path.c_str());
++    {
++      std::lock_guard<std::mutex> lk(yamiImg.mtx);
++      if (yamiImg.map.count(key))
++        continue;
++    }
++    PHYSFS_File *fh = PHYSFS_openRead(path.c_str());
++    if (!fh)
++      continue;
++    PHYSFS_sint64 len = PHYSFS_fileLength(fh);
++    if (len <= 0 || len > (64 << 20)) {
++      PHYSFS_close(fh);
++      continue;
++    }
++    std::vector<unsigned char> buf((size_t)len);
++    PHYSFS_sint64 got = PHYSFS_readBytes(fh, buf.data(), (PHYSFS_uint64)len);
++    PHYSFS_close(fh);
++    if (got != len)
++      continue;
++    SDL_RWops *rw = SDL_RWFromConstMem(buf.data(), (int)len);
++    if (!rw)
++      continue;
++    SDL_Surface *s = IMG_Load_RW(rw, 1);
++    if (!s)
++      continue;
++    SDL_Surface *c = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_ABGR8888, 0);
++    SDL_FreeSurface(s);
++    if (!c)
++      continue;
++    size_t sz = (size_t)c->pitch * (size_t)c->h;
++    std::lock_guard<std::mutex> lk(yamiImg.mtx);
++    if (yamiImg.bytes + sz > yamiImg.budget) {
++      SDL_FreeSurface(c);
++      break; /* budget reached */
++    }
++    yamiImg.map[key] = c;
++    yamiImg.bytes += sz;
++    ++loaded;
++  }
++  Debug() << "Image cache:" << loaded << "character graphics decoded,"
++          << (int)(yamiImg.bytes >> 20) << "MB";
++}
++} // namespace
++
++static void yamiImageCacheShutdown() {
++  yamiImg.stop = true;
++  if (yamiImg.worker.joinable())
++    yamiImg.worker.join();
++  std::lock_guard<std::mutex> lk(yamiImg.mtx);
++  for (auto &e : yamiImg.map)
++    SDL_FreeSurface(e.second);
++  yamiImg.map.clear();
++  yamiImg.bytes = 0;
++}
++
++SDL_Surface *FileSystem::yamiCachedImage(const char *filename) {
++  if (!yamiImg.started.exchange(true)) {
++    yamiImg.budget = yamiImageBudget();
++    if (yamiImg.budget > 0 && p->havePathCache) {
++      std::vector<std::string> files;
++      static const char prefix[] = "graphics/characters/";
++      for (BoostHash<std::string, std::string>::const_iterator it = p->pathCache.cbegin();
++           it != p->pathCache.cend(); ++it) {
++        const std::string &lower = it->first;
++        if (lower.compare(0, sizeof(prefix) - 1, prefix) != 0)
++          continue;
++        size_t n = lower.size();
++        if (n > 4 && lower.compare(n - 4, 4, ".png") == 0)
++          files.push_back(it->second);
++      }
++      if (!files.empty())
++        yamiImg.worker = std::thread(yamiImageWorker, std::move(files));
++    }
++  }
++  if (!filename || !*filename)
++    return 0;
++  const std::string key = yamiImageKey(filename);
++  std::lock_guard<std::mutex> lk(yamiImg.mtx);
++  auto it = yamiImg.map.find(key);
++  if (it == yamiImg.map.end())
++    return 0;
++  return SDL_DuplicateSurface(it->second);
++}
+diff --git a/src/filesystem/filesystem.h b/src/filesystem/filesystem.h
+index 834a394..225cc4a 100644
+--- a/src/filesystem/filesystem.h
++++ b/src/filesystem/filesystem.h
+@@ -74,6 +74,11 @@ public:
+ 
+ 	std::string normalize(const char *pathname, bool preferred, bool absolute);
+ 
++	/* Yami: decoded-image cache. Character graphics are decoded ahead of
++	 * time on a background thread; returns a copy of the decoded surface
++	 * (ABGR8888, caller owns it) or 0. */
++	SDL_Surface *yamiCachedImage(const char *filename);
++
+ 	/* Does not perform extension supplementing */
+ 	bool exists(const char *filename);
  
 diff --git a/src/main.cpp b/src/main.cpp
 index af81d66..95cf26e 100644

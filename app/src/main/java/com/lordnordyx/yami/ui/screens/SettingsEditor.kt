@@ -66,6 +66,7 @@ fun SettingsEditor(vm: LibraryViewModel, s: GameSettings, onChange: ((GameSettin
             if (s.mapCache) SliderRow("Map cache budget", s.mapCacheMb.toFloat(), 32f..512f, format = { "${it.toInt()} MB" }) { v -> onChange { it.copy(mapCacheMb = v.toInt()) } }
             SwitchRow("Optimized maps (experimental)", s.optimizedMaps, "Per-map compact tilesets for huge tilesets (RMXP). Some scripted games break — off by default") { v -> onChange { it.copy(optimizedMaps = v) } }
             SwitchRow("GPU map renderer", s.gpuMaps, "Smooth scrolling (Pokémon Essentials). Turn off if map tiles look wrong") { v -> onChange { it.copy(gpuMaps = v) } }
+            SwitchRow("Graphics cache", s.graphicsCache, "Decodes character sprites in the background so they appear without a hitch. Uses more memory") { v -> onChange { it.copy(graphicsCache = v) } }
             SwitchRow("Warm up graphics", s.warmGraphics, "Pre-reads tilesets and characters in the background") { v -> onChange { it.copy(warmGraphics = v) } }
             SwitchRow("VSync", s.vsync) { v -> onChange { it.copy(vsync = v) } }
             SwitchRow("Frame skip when slow", s.frameSkip) { v -> onChange { it.copy(frameSkip = v) } }
