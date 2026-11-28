@@ -8,9 +8,11 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.lordnordyx.yami.R
 import com.lordnordyx.yami.ui.LibraryViewModel
 
 /*
@@ -44,6 +46,18 @@ val ACCENTS = listOf(
 /** Kept for code that shows paths or numbers in a fixed-width face. */
 val Mono = FontFamily.Monospace
 private val Sans = FontFamily.SansSerif
+
+/** Pixel faces (both OFL): Silkscreen for tiny caps labels, Pixelify Sans for titles. */
+val PixelCaps = FontFamily(Font(R.font.silkscreen))
+val PixelTitle = FontFamily(Font(R.font.pixelify_sans))
+
+/** Frosted glass on black: a whisper of white, brighter at the top edge. */
+object Glass {
+    val Fill = Color(0x0DFFFFFF)
+    val FillStrong = Color(0x17FFFFFF)
+    val EdgeTop = Color(0x33FFFFFF)
+    val EdgeBottom = Color(0x0AFFFFFF)
+}
 
 @Composable
 fun YamiTheme(vm: LibraryViewModel, content: @Composable () -> Unit) {
@@ -88,8 +102,8 @@ fun YamiTheme(vm: LibraryViewModel, content: @Composable () -> Unit) {
         displaySmall = base.displaySmall.sans(),
         headlineLarge = base.headlineLarge.sans().copy(fontWeight = FontWeight.Light, letterSpacing = 0.sp),
         headlineMedium = base.headlineMedium.sans().copy(fontWeight = FontWeight.Light),
-        headlineSmall = base.headlineSmall.sans().copy(fontWeight = FontWeight.Normal),
-        titleLarge = base.titleLarge.sans().copy(fontWeight = FontWeight.Medium),
+        headlineSmall = base.headlineSmall.copy(fontFamily = PixelTitle, fontWeight = FontWeight.Normal),
+        titleLarge = base.titleLarge.copy(fontFamily = PixelTitle, fontWeight = FontWeight.Normal),
         titleMedium = base.titleMedium.sans().copy(fontWeight = FontWeight.Medium),
         titleSmall = base.titleSmall.sans().copy(fontWeight = FontWeight.Medium),
         bodyLarge = base.bodyLarge.sans().copy(fontSize = 16.sp, letterSpacing = 0.1.sp),
@@ -98,7 +112,7 @@ fun YamiTheme(vm: LibraryViewModel, content: @Composable () -> Unit) {
         labelLarge = base.labelLarge.sans().copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp),
         labelMedium = base.labelMedium.sans(),
         // section labels: small, wide-tracked capitals
-        labelSmall = TextStyle(fontFamily = Sans, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.6.sp),
+        labelSmall = TextStyle(fontFamily = PixelCaps, fontSize = 10.sp, fontWeight = FontWeight.Normal, letterSpacing = 1.2.sp),
     )
     MaterialTheme(colorScheme = scheme, typography = type, content = content)
 }

@@ -65,7 +65,7 @@ fun ControlsScreen(vm: LibraryViewModel, back: () -> Unit) {
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
-    Column(Modifier.fillMaxSize().background(Dark.Void)) {
+    Column(Modifier.fillMaxSize()) {
     YamiTopBar("Controls", back)
     Column(
         Modifier.fillMaxSize().navigationBarsPadding().focusRequester(focus).focusable()

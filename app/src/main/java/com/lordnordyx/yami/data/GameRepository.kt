@@ -70,6 +70,10 @@ class GameRepository(private val context: Context, private val owner: Boolean = 
             _settings.value = _settings.value.copy(defaults = _settings.value.defaults.v4())
             _games.value = _games.value.map { it.copy(settings = it.settings.v4()) }
         }
+        if (from < 5) {
+            // v5: the library opens as a carousel
+            _settings.value = _settings.value.copy(libraryView = LibraryView.CAROUSEL)
+        }
         _settings.value = _settings.value.copy(schema = AppSettings.SCHEMA)
         persist()
     }

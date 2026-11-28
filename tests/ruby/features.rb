@@ -15,10 +15,46 @@ end
 class Sprite
   attr_accessor :zoom_x, :zoom_y, :opacity, :z
 end
+# the engine's live Look controls, recorded
+module Graphics
+  class << self
+    attr_reader :look_log
+    def smooth_scaling=(v); (@look_log ||= []) << [:scaling, v]; end
+    def integer_scaling=(v); (@look_log ||= []) << [:integer, v]; end
+    def yami_post_shader(path, i); (@look_log ||= []) << [:shader, path, i]; end
+  end
+end
+# tiles with known colours: stretch_blt copies the source's colour into the strip
+class Bitmap
+  attr_accessor :colour
+  def stretch_blt(dr, src, sr)
+    @px ||= {}
+    (dr.x...(dr.x + dr.width)).each { |x| (dr.y...(dr.y + dr.height)).each { |y| @px[[x, y]] = src.colour_at(sr) } }
+  end
+  def colour_at(_r) = @colour || [0, 0, 0, 0]
+  def raw_data
+    (0...height).flat_map { |y| (0...width).map { |x| (@px || {})[[x, y]] || [0, 0, 0, 0] } }.flatten.pack("C*")
+  end
+end
+class RefBitmap < Bitmap
+  attr_reader :refs
+  def addRef; end
+  def dispose; @released = true; end
+  def released? = @released
+end
+module RPG
+  module Cache
+    TS = RefBitmap.new(256, 64)
+    def TS.colour_at(r) = r.y >= 32 ? [120, 90, 60, 255] : [60, 160, 80, 255]   # row 1 brown wall, row 0 green floor
+    AT = RefBitmap.new(96, 128); AT.colour = [40, 90, 200, 255]
+    def self.tileset(_n) = TS
+    def self.autotile(n) = n.to_s.empty? ? nil : AT
+  end
+end
 
 work = Dir.mktmpdir("yami-feat"); save = File.join(work, "save"); Dir.mkdir(save)
 control = File.join(work, "control.txt")
-File.write(File.join(work, "y.cfg"), "mode=play\nrgss=1\nwidescreen=off\nsave_dir=#{save}\ninstant_text=true\nminimap=false\ncontrol_file=#{control}\n")
+File.write(File.join(work, "y.cfg"), "mode=play\nrgss=1\nwidescreen=off\nsave_dir=#{save}\ninstant_text=true\nminimap=false\nshiny_odds=128\ncontrol_file=#{control}\n")
 ENV["YAMI_CFG"] = File.join(work, "y.cfg")
 Dir.chdir(work)
 %w[yami_runtime.rb yami_ruby18.rb yami_win32.rb].each { |f| load File.join(SCRIPTS, f) }
@@ -42,7 +78,7 @@ section("100:Essentials", <<~RB)
   class Game_System; attr_accessor :encounter_disabled; end
   class Game_Player; attr_accessor :x, :y, :through; end
   class Game_Map
-    attr_accessor :map_id, :data, :passages, :priorities, :terrain_tags, :width, :height
+    attr_accessor :map_id, :data, :passages, :priorities, :terrain_tags, :width, :height, :tileset_name, :autotile_names
   end
   class Scene_Map; end
   class Window_AdvancedTextPokemon
@@ -62,15 +98,18 @@ $game_player = Game_Player.new; $game_player.x = 2; $game_player.y = 1; $game_pl
 m = Game_Map.new
 m.map_id = 5; m.width = 4; m.height = 3
 m.data = Table.new(4, 3, 3); m.passages = Table.new(400); m.priorities = Table.new(400); m.terrain_tags = Table.new(400)
-4.times { |x| 3.times { |y| m.data[x, y, 0] = 384 } }       # floor
-m.data[0, 0, 1] = 390; m.passages[390] = 0x0f              # a wall
+4.times { |x| 3.times { |y| m.data[x, y, 0] = 384 } }       # floor (green)
+m.data[0, 0, 1] = 392; m.passages[392] = 0x0f              # a wall (brown)
+m.data[3, 2, 0] = 48                                       # water autotile (blue)
+m.tileset_name = "Outside"; m.autotile_names = ["Water", "", "", "", "", "", ""]
 $game_map = m
 $scene = Scene_Map.new
 
 def frames(n) = n.times { Graphics.update }
 def control(h) = File.write($control, h.map { |k, v| "#{k}=#{v}\n" }.join)
 $control = control
-control(instant_text: true, minimap: false, shiny: 0, no_encounters: false, noclip: false, money_seq: 0, heal_seq: 0)
+LOOK0 = { look_scaling: 1, look_integer: false, look_shader: "", look_intensity: 1.0 }
+control({ instant_text: true, minimap: false }.merge(LOOK0))
 frames(12)
 
 # --- instant text ---
@@ -82,41 +121,35 @@ w2.update
 check "instant text: stops at a pause inside the message", w2.shown == 10 && w2.busy?
 w2.update
 check "instant text: waits at the pause for the button", w2.shown == 10
-control(instant_text: false, minimap: false, shiny: 0, no_encounters: false, noclip: false, money_seq: 0, heal_seq: 0); frames(12)
+control({ instant_text: false, minimap: false }.merge(LOOK0)); frames(12)
 w3 = Window_AdvancedTextPokemon.new(40); w3.update
 check "instant text off: letter by letter again", w3.shown == 1 && w3.skips == 0
 
-# --- shiny odds ---
-check "game's odds untouched while off", 200.times.none? { PokeBattle_Pokemon.new(1, 5).shiny? }
+# --- shiny odds (game setting 1 in 128) ---
 before = $Trainer.party.first
-control(instant_text: false, minimap: false, shiny: 4, no_encounters: false, noclip: false, money_seq: 0, heal_seq: 0); frames(12)
-check "shiny odds 'always': new Pokémon are shiny", 20.times.all? { PokeBattle_Pokemon.new(1, 5).shiny? }
+n = 12800.times.count { PokeBattle_Pokemon.new(1, 5).shiny? }
+check "shiny odds 1 in 128 for new Pokémon (#{n} of 12800)", n.between?(60, 145)
 check "Pokémon you already have stay as they were", !before.shiny?
-control(instant_text: false, minimap: false, shiny: 2, no_encounters: false, noclip: false, money_seq: 0, heal_seq: 0); frames(12)
-n = 6400.times.count { PokeBattle_Pokemon.new(1, 5).shiny? }
-check "shiny odds 1 in 64 (#{n} of 6400)", n.between?(50, 160)
 
-# --- encounters, walls ---
-control(instant_text: false, minimap: false, shiny: 0, no_encounters: true, noclip: true, money_seq: 0, heal_seq: 0); frames(12)
-check "no random encounters", !PokemonEncounters.new.isEncounterPossibleHere? && $game_system.encounter_disabled == true
-check "walk through walls", $game_player.through == true
-control(instant_text: false, minimap: false, shiny: 0, no_encounters: false, noclip: false, money_seq: 0, heal_seq: 0); frames(12)
-check "both back to normal when off", PokemonEncounters.new.isEncounterPossibleHere? && $game_system.encounter_disabled.nil? && $game_player.through == false
+# --- no cheats any more ---
+check "cheats are gone", !defined?(Yami::Cheats) && !Yami::Features::STATE.key?("noclip")
 
-# --- one-shot actions ---
-control(instant_text: false, minimap: false, shiny: 0, no_encounters: false, noclip: false, money_seq: 1, heal_seq: 1); frames(12)
-check "max money (capped by the game)", $Trainer.money == 999_999
-check "party healed", $Trainer.party.first.hp == 50
-$Trainer.money = 5; frames(24)
-check "actions run once per press", $Trainer.money == 5
+# --- Look changed in the in-game menu, live ---
+check "the launch Look isn't re-applied", Graphics.look_log.nil?
+control({ instant_text: false, minimap: false }.merge(LOOK0).merge(look_scaling: 0, look_integer: true, look_shader: "/rt/shaders/lcd3x.frag")); frames(12)
+log = Graphics.look_log || []
+check "Look applied live: sharp pixels, pixel perfect, LCD3x", log.include?([:scaling, 0]) && log.include?([:integer, true]) && log.include?([:shader, "/rt/shaders/lcd3x.frag", 1.0])
 
 # --- minimap ---
-control(instant_text: false, minimap: true, shiny: 0, no_encounters: false, noclip: false, money_seq: 1, heal_seq: 1); frames(14)
+control({ instant_text: false, minimap: true }.merge(LOOK0).merge(look_scaling: 0, look_integer: true, look_shader: "/rt/shaders/lcd3x.frag")); frames(20)
 mm = Yami::Minimap
 bmp = mm.instance_variable_get(:@bmp)
 check "minimap built from the map (raw pixels)", bmp && bmp.raw && bmp.raw.bytesize == 4 * 3 * 4
-wall = bmp.raw[0, 4].unpack("C4"); floor = bmp.raw[4, 4].unpack("C4")
-check "walls dark, floor lighter", wall[0..2] == [0, 0, 0] && floor[0] > 30
+wall = bmp.raw[0, 4].unpack("C4"); floor = bmp.raw[4, 4].unpack("C4"); water = bmp.raw[(2 * 4 + 3) * 4, 4].unpack("C4")
+check "minimap in the map's own colours: green floor", floor[1] > floor[0] && floor[1] > floor[2] && floor[1] > 150
+check "...a darker brown wall", wall[0] > wall[2] && wall[0] < 120
+check "...blue water", water[2] > water[0] && water[2] > 150
+check "borrowed tileset and autotile given back", RPG::Cache::TS.released? && RPG::Cache::AT.released?
 dot = mm.instance_variable_get(:@dot); spr = mm.instance_variable_get(:@sprite)
 sc = mm.instance_variable_get(:@scale)
 p [dot.x, spr.x, sc, dot.visible]

@@ -35,6 +35,7 @@ fun YamiNav(vm: LibraryViewModel) {
     val back: () -> Unit = { nav.popBackStack() }
     fun cat(name: String?) = SettingsCategory.entries.firstOrNull { it.name == name } ?: SettingsCategory.DISPLAY
     Box(Modifier.fillMaxSize().background(Dark.Void)) {
+        DarkBackdrop()
         NavHost(nav, startDestination = "library",
             // out of the dark: a short fade with a slight drift
             enterTransition = { fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 12 } },

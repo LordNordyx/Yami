@@ -24,8 +24,11 @@ import com.lordnordyx.yami.MainActivity
 import com.lordnordyx.yami.data.Game
 import com.lordnordyx.yami.data.GameRepository
 import com.lordnordyx.yami.data.GameSettings
+import com.lordnordyx.yami.data.Look
+import com.lordnordyx.yami.data.ScreenFit
 import com.lordnordyx.yami.data.SaveManager
 import com.lordnordyx.yami.engine.EngineConfig
+import com.lordnordyx.yami.engine.RuntimeAssets
 import com.lordnordyx.yami.input.ControllerMapper
 import com.lordnordyx.yami.input.InputConfig
 import com.lordnordyx.yami.input.KeyInjector
@@ -60,9 +63,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     // quick-menu switches, passed to the runtime through the control file
     private var instantText = false
     private var minimap = false
-    private var cheats = QuickMenuView.Cheats(0, noEncounters = false, noclip = false)
-    private var moneySeq = 0
-    private var healSeq = 0
+    private var look = Look.SHARP
     private lateinit var inputConfig: InputConfig
     private var optimizeMode = false
 
@@ -101,6 +102,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         inputConfig = InputConfig.load(this)
         instantText = settings.instantText
         minimap = settings.minimap
+        look = Look.of(settings)
         writeControl()
 
         if (!optimizeMode) runCatching { SaveManager(this, repo).snapshot(g) }
@@ -283,6 +285,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     }
 
     override fun dispatchGenericMotionEvent(ev: MotionEvent): Boolean {
+        val m = menu
+        if (m != null && m.visibility == View.VISIBLE && m.handleMotion(ev)) return true
         if (::mapper.isInitialized && mapper.onMotion(ev)) return true
         return super.dispatchGenericMotionEvent(ev)
     }
@@ -307,6 +311,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         title = game?.title ?: "",
         instantText = instantText,
         minimap = minimap,
+        look = look.label,
     )
 
     private fun toggleMenu() {
@@ -322,28 +327,42 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     /** Switches for the runtime: read by Yami::Features a few times a second. */
     private fun writeControl() {
         val g = game ?: return
+        val shader = RuntimeAssets.Installed(repo.runtimeDir, repo.userShaderDir).shader(settings.shader)
         runCatching {
             EngineConfig.controlFile(repo.runtimeDir, g.id).writeText(buildString {
                 appendLine("instant_text=$instantText")
                 appendLine("minimap=$minimap")
-                appendLine("shiny=${cheats.shiny}")
-                appendLine("no_encounters=${cheats.noEncounters}")
-                appendLine("noclip=${cheats.noclip}")
-                appendLine("money_seq=$moneySeq")
-                appendLine("heal_seq=$healSeq")
+                appendLine("look_scaling=${settings.scaling.code}")
+                appendLine("look_integer=${settings.fit == ScreenFit.INTEGER}")
+                appendLine("look_shader=${shader?.absolutePath ?: ""}")
+                appendLine("look_intensity=${settings.shaderIntensity}")
             })
         }
     }
 
-    private fun cheat(focus: QuickMenuView.Action, change: () -> Unit) {
-        change()
+    /** Steps through the Look presets live, and keeps the choice for next time. */
+    private fun cycleLook(step: Int) {
+        val all = Look.presets
+        val i = all.indexOf(look)
+        look = all[((if (i < 0) 0 else i + step) % all.size + all.size) % all.size]
+        settings = look.applyTo(settings)
         writeControl()
-        menu?.showCheats(cheats, focus)
+        game?.let { g ->
+            if (g.useGlobalSettings) repo.updateSettings { it.copy(defaults = look.applyTo(it.defaults)) }
+            else repo.update(g.id) { it.copy(settings = look.applyTo(it.settings)) }
+        }
+        menu?.show(menuState())
     }
 
     private fun onMenuAction(a: QuickMenuView.Action) {
+        when (a) {
+            QuickMenuView.Action.LOOK_NEXT -> return cycleLook(1)
+            QuickMenuView.Action.LOOK_PREV -> return cycleLook(-1)
+            else -> {}
+        }
         menu?.visibility = View.GONE
         when (a) {
+            QuickMenuView.Action.LOOK_NEXT, QuickMenuView.Action.LOOK_PREV -> {}
             QuickMenuView.Action.RESUME -> {}
             QuickMenuView.Action.TURBO -> injector.tap(RgssButton.TURBO)
             QuickMenuView.Action.TOUCH -> touch?.let {
@@ -360,19 +379,6 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             QuickMenuView.Action.QUIT -> quitToLibrary()
             QuickMenuView.Action.INSTANT_TEXT -> { instantText = !instantText; writeControl() }
             QuickMenuView.Action.MINIMAP -> { minimap = !minimap; writeControl() }
-            QuickMenuView.Action.CHEATS -> menu?.showCheats(cheats)
-            QuickMenuView.Action.CHEAT_SHINY -> cheat(a) { cheats = cheats.copy(shiny = (cheats.shiny + 1) % QuickMenuView.SHINY_LABELS.size) }
-            QuickMenuView.Action.CHEAT_ENCOUNTERS -> cheat(a) { cheats = cheats.copy(noEncounters = !cheats.noEncounters) }
-            QuickMenuView.Action.CHEAT_NOCLIP -> cheat(a) { cheats = cheats.copy(noclip = !cheats.noclip) }
-            QuickMenuView.Action.CHEAT_MONEY -> cheat(a) {
-                moneySeq++
-                Toast.makeText(this, "Money set to the game's maximum", Toast.LENGTH_SHORT).show()
-            }
-            QuickMenuView.Action.CHEAT_HEAL -> cheat(a) {
-                healSeq++
-                Toast.makeText(this, "Party healed", Toast.LENGTH_SHORT).show()
-            }
-            QuickMenuView.Action.BACK -> menu?.show(menuState())
         }
     }
 

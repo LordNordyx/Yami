@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Sort
 import androidx.compose.material.icons.outlined.ViewAgenda
+import androidx.compose.material.icons.outlined.ViewCarousel
 import androidx.compose.material.icons.outlined.ViewList
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -91,6 +92,7 @@ import com.lordnordyx.yami.ui.PrimaryButton
 import com.lordnordyx.yami.ui.SheetHandle
 import com.lordnordyx.yami.ui.Wordmark
 import com.lordnordyx.yami.ui.focusRing
+import com.lordnordyx.yami.ui.glass
 import com.lordnordyx.yami.ui.formatPlaytime
 import com.lordnordyx.yami.ui.theme.Dark
 
@@ -135,7 +137,7 @@ fun LibraryScreen(vm: LibraryViewModel, openGame: (String) -> Unit, openSettings
     }
 
     Scaffold(
-        containerColor = Dark.Void,
+        containerColor = Color.Transparent,
         snackbarHost = {
             SnackbarHost(snack) { d ->
                 Snackbar(d, containerColor = Dark.Dusk, contentColor = Dark.Ink, actionColor = MaterialTheme.colorScheme.primary,
@@ -143,21 +145,41 @@ fun LibraryScreen(vm: LibraryViewModel, openGame: (String) -> Unit, openSettings
             }
         },
         floatingActionButton = {
-            PrimaryButton("Add game", { addSheet = true }, Modifier.navigationBarsPadding(), icon = Icons.Default.Add, height = 54.dp)
+            if (settings.libraryView != LibraryView.CAROUSEL || all.isEmpty())
+                PrimaryButton("Add game", { addSheet = true }, Modifier.navigationBarsPadding(), icon = Icons.Default.Add, height = 54.dp)
         },
     ) { pad ->
         Box(Modifier.fillMaxSize().padding(bottom = pad.calculateBottomPadding())) {
             val view = settings.libraryView
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(when (view) { LibraryView.LIST -> 600.dp; LibraryView.COVERS -> 280.dp; LibraryView.GRID -> 150.dp }),
+            val cycle = { vm.updateApp { it.copy(libraryView = LibraryView.entries[(view.ordinal + 1) % LibraryView.entries.size]) } }
+            if (view == LibraryView.CAROUSEL && all.isNotEmpty()) {
+                var searching by remember { mutableStateOf(query.isNotBlank()) }
+                Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+                    Box(Modifier.padding(horizontal = 16.dp)) {
+                        Header(all.size, view, cycle, openSort = { sortSheet = true }, openSettings = openSettings,
+                            onAdd = { addSheet = true }, onSearch = { searching = !searching; if (!searching) vm.query.value = "" })
+                    }
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        Filter.entries.forEach { f -> FilterPill(f.label, f == filter) { filter = f } }
+                        if (searching) Box(Modifier.weight(1f)) { SearchPill(query) { vm.query.value = it } }
+                    }
+                    if (games.isEmpty()) EmptyState(when {
+                        query.isNotBlank() -> "Nothing matches “$query”"
+                        filter == Filter.FAVORITES -> "No favorites yet — long-press a game to add it"
+                        else -> "Nothing played yet"
+                    })
+                    else LibraryCarousel(games, Modifier.weight(1f),
+                        onPlay = { vm.play(ctx, it.id) }, onOpen = { openGame(it.id) }, onFavorite = { vm.toggleFavorite(it.id) })
+                }
+            } else LazyVerticalGrid(
+                columns = GridCells.Adaptive(when (view) { LibraryView.LIST -> 600.dp; LibraryView.COVERS -> 280.dp; else -> 150.dp }),
                 contentPadding = PaddingValues(16.dp, 0.dp, 16.dp, 110.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 item(span = { GridItemSpan(maxLineSpan) }) {
-                    Header(all.size, view,
-                        cycleView = { vm.updateApp { it.copy(libraryView = LibraryView.entries[(view.ordinal + 1) % LibraryView.entries.size]) } },
-                        openSort = { sortSheet = true }, openSettings = openSettings)
+                    Header(all.size, view, cycle, openSort = { sortSheet = true }, openSettings = openSettings)
                 }
                 item(span = { GridItemSpan(maxLineSpan) }) { SearchPill(query) { vm.query.value = it } }
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -208,7 +230,8 @@ fun LibraryScreen(vm: LibraryViewModel, openGame: (String) -> Unit, openSettings
 }
 
 @Composable
-private fun Header(count: Int, view: LibraryView, cycleView: () -> Unit, openSort: () -> Unit, openSettings: () -> Unit) {
+private fun Header(count: Int, view: LibraryView, cycleView: () -> Unit, openSort: () -> Unit, openSettings: () -> Unit,
+                   onAdd: (() -> Unit)? = null, onSearch: (() -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().statusBarsPadding().padding(top = 10.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
         EclipseMark(Modifier.size(34.dp))
         Spacer(Modifier.width(10.dp))
@@ -216,8 +239,11 @@ private fun Header(count: Int, view: LibraryView, cycleView: () -> Unit, openSor
             Wordmark(22)
             Text(if (count == 1) "1 game" else "$count games", style = MaterialTheme.typography.bodySmall, color = Dark.Mist)
         }
+        if (onSearch != null) IconButton(onSearch, Modifier.focusRing(CircleShape)) { Icon(Icons.Outlined.Search, "Search", tint = Dark.Mist) }
+        if (onAdd != null) IconButton(onAdd, Modifier.focusRing(CircleShape)) { Icon(Icons.Default.Add, "Add game", tint = Dark.Mist) }
         IconButton(cycleView, Modifier.focusRing(CircleShape)) {
             Icon(when (view) {
+                LibraryView.CAROUSEL -> Icons.Outlined.ViewCarousel
                 LibraryView.COVERS -> Icons.Outlined.ViewAgenda
                 LibraryView.GRID -> Icons.Outlined.GridView
                 LibraryView.LIST -> Icons.Outlined.ViewList
@@ -230,7 +256,7 @@ private fun Header(count: Int, view: LibraryView, cycleView: () -> Unit, openSor
 
 @Composable
 private fun SearchPill(query: String, onChange: (String) -> Unit) {
-    Row(Modifier.fillMaxWidth().height(50.dp).clip(CircleShape).background(Dark.Shade).border(1.dp, Dark.Hairline, CircleShape)
+    Row(Modifier.fillMaxWidth().height(50.dp).glass(CircleShape)
         .padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Icon(Icons.Outlined.Search, null, tint = Dark.Faint, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(10.dp))
@@ -277,7 +303,7 @@ private fun HeroCard(g: Game, onPlay: () -> Unit, onOpen: () -> Unit) {
 @Composable
 private fun GameCard(g: Game, compact: Boolean, onClick: () -> Unit, onLongClick: () -> Unit, onPlay: () -> Unit) {
     val shape = RoundedCornerShape(if (compact) 18.dp else 22.dp)
-    Column(Modifier.focusRing(shape, 3.dp).clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
+    Column(Modifier.focusRing(shape, 3.dp).glass(shape)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick, onDoubleClick = onPlay)) {
         Box(Modifier.fillMaxWidth().aspectRatio(4f / 3f)) {
             Cover(g.coverPath, g.title, Modifier.fillMaxSize())
@@ -301,7 +327,7 @@ private fun GameCard(g: Game, compact: Boolean, onClick: () -> Unit, onLongClick
 @Composable
 private fun ListRow(g: Game, onClick: () -> Unit, onLongClick: () -> Unit, onPlay: () -> Unit) {
     val shape = RoundedCornerShape(18.dp)
-    Row(Modifier.fillMaxWidth().focusRing(shape, 3.dp).clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape)
+    Row(Modifier.fillMaxWidth().focusRing(shape, 3.dp).glass(shape)
         .combinedClickable(onClick = onClick, onLongClick = onLongClick).padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
         Cover(g.coverPath, g.title, Modifier.size(width = 92.dp, height = 69.dp).clip(RoundedCornerShape(12.dp)), fade = false)
         Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {

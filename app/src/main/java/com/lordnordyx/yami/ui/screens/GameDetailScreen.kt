@@ -64,6 +64,7 @@ import com.lordnordyx.yami.ui.NavRow
 import com.lordnordyx.yami.ui.PrimaryButton
 import com.lordnordyx.yami.ui.Section
 import com.lordnordyx.yami.ui.focusRing
+import com.lordnordyx.yami.ui.glass
 import com.lordnordyx.yami.ui.formatPlaytime
 import com.lordnordyx.yami.ui.theme.Dark
 import com.lordnordyx.yami.ui.theme.Mono
@@ -88,7 +89,7 @@ fun GameDetailScreen(vm: LibraryViewModel, id: String, back: () -> Unit, openSet
         uri?.let { vm.saves.import(g, it); refresh++; vm.message.value = "Saves imported" }
     }
 
-    Box(Modifier.fillMaxSize().background(Dark.Void)) {
+    Box(Modifier.fillMaxSize()) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             Box(Modifier.fillMaxWidth().height(320.dp)) {
                 Cover(g.coverPath, g.title, Modifier.fillMaxSize())
@@ -207,7 +208,7 @@ private fun RoundIcon(icon: @Composable () -> Unit, onClick: () -> Unit) {
 @Composable
 private fun StatTile(label: String, value: String, modifier: Modifier = Modifier) {
     val shape = RoundedCornerShape(16.dp)
-    Column(modifier.clip(shape).background(Dark.Shade).border(1.dp, Dark.Hairline, shape).padding(horizontal = 12.dp, vertical = 10.dp)) {
+    Column(modifier.glass(shape).padding(horizontal = 12.dp, vertical = 10.dp)) {
         Text(label.uppercase(), style = MaterialTheme.typography.labelSmall, color = Dark.Faint, maxLines = 1)
         Spacer(Modifier.height(3.dp))
         Text(value, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, color = Dark.Ink,

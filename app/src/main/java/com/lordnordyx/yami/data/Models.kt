@@ -10,6 +10,24 @@ enum class WidescreenMode(val label: String, val blurb: String) {
     PANORAMIC("Panoramic", "Map fills the screen, menus and UI stay at original width, centered"),
 }
 
+/** One choice for the overall picture: scaling, fit and shader together. */
+enum class Look(val label: String, val blurb: String, val fit: ScreenFit?, val scaling: ScalingFilter?, val shader: String?) {
+    SHARP("Sharp", "Crisp pixels filling the screen", ScreenFit.FIT, ScalingFilter.NEAREST, "none"),
+    SMOOTH("Smooth", "Soft scaling, no effects", ScreenFit.FIT, ScalingFilter.BILINEAR, "none"),
+    PIXEL("Pixel perfect", "Every pixel exactly the same size. May leave thin borders", ScreenFit.INTEGER, ScalingFilter.NEAREST, "none"),
+    LCD3X("LCD3x", "A handheld LCD: red, green and blue stripes in every pixel, soft row gaps", ScreenFit.FIT, ScalingFilter.NEAREST, "lcd3x"),
+    CRT("CRT", "Scanlines, aperture mask, glow and a gentle curve", ScreenFit.FIT, ScalingFilter.NEAREST, "crt"),
+    DARKNESS("Darkness", "Edges sink into black, deeper blacks", ScreenFit.FIT, ScalingFilter.NEAREST, "darkness"),
+    CUSTOM("Custom", "Your own mix (Fine-tune)", null, null, null);
+
+    fun applyTo(s: GameSettings) = s.copy(fit = fit ?: s.fit, scaling = scaling ?: s.scaling, shader = shader ?: s.shader)
+
+    companion object {
+        val presets get() = entries.filter { it != CUSTOM }
+        fun of(s: GameSettings) = presets.firstOrNull { it.fit == s.fit && it.scaling == s.scaling && it.shader == s.shader } ?: CUSTOM
+    }
+}
+
 @Serializable
 enum class MenuSides(val label: String, val blurb: String) {
     ART("Blurred art", "The menu's own picture, blurred and dimmed, fills the sides"),
@@ -101,6 +119,8 @@ data class GameSettings(
     val minimap: Boolean = false,
     /** What fills the sides of 4:3 menus in panoramic mode. */
     val menuSides: MenuSides = MenuSides.ART,
+    /** Shiny odds for new Pokémon: 0 = the game's own, else 1 in N (512, 256, 128). */
+    val shinyOdds: Int = 0,
     // Audio
     val soundFont: String = "",
     val midiReverb: Boolean = true,
@@ -155,7 +175,7 @@ data class AppSettings(
     /** Bumped when defaults change in a way stored settings must follow (see GameRepository.migrate).
      *  Files written before this field existed decode as 1. */
     val schema: Int = 1,
-    val libraryView: LibraryView = LibraryView.COVERS,
+    val libraryView: LibraryView = LibraryView.CAROUSEL,
     val sort: LibrarySort = LibrarySort.RECENT,
     val hideFromGallery: Boolean = true,
     val rtpPaths: List<String> = emptyList(),
@@ -166,10 +186,10 @@ data class AppSettings(
     val optimizeOnImport: Boolean = true,
     val haptics: Boolean = true,
 ) {
-    companion object { const val SCHEMA = 4 }
+    companion object { const val SCHEMA = 5 }
 }
 
-@Serializable enum class LibraryView { COVERS, GRID, LIST }
+@Serializable enum class LibraryView { CAROUSEL, COVERS, GRID, LIST }
 @Serializable enum class LibrarySort(val label: String) {
     RECENT("Recently played"), TITLE("Title"), ADDED("Recently added"), PLAYTIME("Play time")
 }

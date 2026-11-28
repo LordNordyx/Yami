@@ -70,6 +70,7 @@ object EngineConfig {
             appendLine("instant_text=${s.instantText}")
             appendLine("minimap=${s.minimap}")
             appendLine("menu_sides=${s.menuSides.name.lowercase()}")
+            appendLine("shiny_odds=${s.shinyOdds}")
             appendLine("control_file=${controlFile(runtime.dir, game.id).absolutePath}")
             appendLine("redirect_saves=${s.redirectSaves && !game.inPlace}")
             appendLine("save_dir=${dataDir.absolutePath}")

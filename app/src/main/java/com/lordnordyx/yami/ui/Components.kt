@@ -126,9 +126,16 @@ fun EclipseMark(modifier: Modifier = Modifier, color: Color = MaterialTheme.colo
 /** YAMI, set wide and light. */
 @Composable
 fun Wordmark(size: Int = 22) {
-    Text("YAMI", fontSize = size.sp, fontWeight = FontWeight.Light, letterSpacing = (size * 0.42f).sp,
+    Text("YAMI", fontSize = size.sp, fontFamily = com.lordnordyx.yami.ui.theme.PixelCaps, letterSpacing = (size * 0.22f).sp,
         color = MaterialTheme.colorScheme.onBackground)
 }
+
+/** Frosted glass: a faint white wash with light catching the top edge. */
+fun Modifier.glass(shape: androidx.compose.ui.graphics.Shape, strong: Boolean = false): Modifier = this
+    .clip(shape)
+    .background(if (strong) com.lordnordyx.yami.ui.theme.Glass.FillStrong else com.lordnordyx.yami.ui.theme.Glass.Fill)
+    .border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(
+        listOf(com.lordnordyx.yami.ui.theme.Glass.EdgeTop, com.lordnordyx.yami.ui.theme.Glass.EdgeBottom)), shape)
 
 // ================================================================ covers
 object CoverCache {
@@ -194,7 +201,7 @@ fun YamiTopBar(title: String, onBack: (() -> Unit)?, actions: @Composable RowSco
 @Composable
 fun YamiPage(title: String, onBack: (() -> Unit)?, actions: @Composable RowScope.() -> Unit = {},
              content: @Composable ColumnScope.() -> Unit) {
-    Column(Modifier.fillMaxSize().background(Dark.Void)) {
+    Column(Modifier.fillMaxSize()) {
         YamiTopBar(title, onBack, actions)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).navigationBarsPadding()) {
             content()
@@ -209,8 +216,7 @@ fun Section(title: String?, content: @Composable ColumnScope.() -> Unit) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp)) {
         if (!title.isNullOrBlank()) Text(title.uppercase(), style = MaterialTheme.typography.labelSmall,
             color = Dark.Mist, modifier = Modifier.padding(start = 6.dp, bottom = 8.dp))
-        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Dark.Shade)
-            .border(1.dp, Dark.Hairline, RoundedCornerShape(20.dp)).padding(vertical = 4.dp)) { content() }
+        Column(Modifier.fillMaxWidth().glass(RoundedCornerShape(20.dp)).padding(vertical = 4.dp)) { content() }
     }
 }
 

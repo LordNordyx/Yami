@@ -12,12 +12,17 @@ import androidx.compose.material.icons.outlined.Gamepad
 import androidx.compose.material.icons.outlined.GraphicEq
 import androidx.compose.material.icons.outlined.Monitor
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.lordnordyx.yami.data.AspectPreset
 import com.lordnordyx.yami.data.ControllerProfile
 import com.lordnordyx.yami.data.GameSettings
+import com.lordnordyx.yami.data.Look
 import com.lordnordyx.yami.data.MenuSides
 import com.lordnordyx.yami.data.ScalingFilter
 import com.lordnordyx.yami.data.ScreenFit
@@ -34,25 +39,6 @@ import com.lordnordyx.yami.ui.SwitchRow
 import kotlinx.coroutines.launch
 import java.io.File
 
-/** One choice for the overall picture: scaling, fit and shader together. */
-enum class Look(val label: String, val blurb: String, val fit: ScreenFit?, val scaling: ScalingFilter?, val shader: String?) {
-    PIXEL("Pixel perfect", "Whole-number scaling with sharp pixels: every pixel the same size. May leave thin borders",
-        ScreenFit.INTEGER, ScalingFilter.NEAREST, "none"),
-    SHARP("Sharp", "Sharp pixels filling the screen", ScreenFit.FIT, ScalingFilter.NEAREST, "none"),
-    SMOOTH("Smooth", "Soft scaling, no effects", ScreenFit.FIT, ScalingFilter.BILINEAR, "none"),
-    CRT("CRT", "Scanlines, aperture mask, glow and a gentle curve — an old TV", ScreenFit.FIT, ScalingFilter.NEAREST, "crt"),
-    LCD("Handheld LCD", "The fine pixel grid of a handheld screen", ScreenFit.FIT, ScalingFilter.NEAREST, "lcd"),
-    SCANLINES("Scanlines", "Clean horizontal lines, no curve", ScreenFit.FIT, ScalingFilter.NEAREST, "scanlines"),
-    DARKNESS("Darkness", "Edges sink into black, deeper blacks", ScreenFit.FIT, ScalingFilter.NEAREST, "darkness"),
-    CUSTOM("Custom", "Your own mix of the settings below", null, null, null);
-
-    fun applyTo(s: GameSettings) = s.copy(fit = fit ?: s.fit, scaling = scaling ?: s.scaling, shader = shader ?: s.shader)
-
-    companion object {
-        fun of(s: GameSettings) = entries.firstOrNull { it != CUSTOM && it.fit == s.fit && it.scaling == s.scaling && it.shader == s.shader } ?: CUSTOM
-    }
-}
-
 /** Engine options, one sub-menu each. Used for per-game settings and global defaults. */
 enum class SettingsCategory(val label: String, val icon: ImageVector) {
     DISPLAY("Display", Icons.Outlined.Monitor),
@@ -66,7 +52,8 @@ enum class SettingsCategory(val label: String, val icon: ImageVector) {
     /** One line describing the current state, shown on the menu row. */
     fun summary(s: GameSettings): String = when (this) {
         DISPLAY -> listOf(Look.of(s).label, s.widescreen.label).joinToString(" · ")
-        GAMEPLAY -> listOfNotNull("Instant text".takeIf { s.instantText }, "Minimap".takeIf { s.minimap })
+        GAMEPLAY -> listOfNotNull("Instant text".takeIf { s.instantText }, "Minimap".takeIf { s.minimap },
+            "Shiny 1/${s.shinyOdds}".takeIf { s.shinyOdds > 0 })
             .ifEmpty { listOf("As the game made it") }.joinToString(" · ")
         PERFORMANCE -> listOfNotNull(
             "GPU maps".takeIf { s.gpuMaps }, "60 FPS".takeIf { s.force60 },
@@ -101,52 +88,60 @@ fun ColumnScope.SettingsCategoryContent(vm: LibraryViewModel, cat: SettingsCateg
 
     when (cat) {
         SettingsCategory.DISPLAY -> {
+            val look = Look.of(s)
             Section("Look") {
-                val look = Look.of(s)
-                ChoiceRow("Look", look, Look.entries.filter { it != Look.CUSTOM || look == Look.CUSTOM }, { it.label },
+                ChoiceRow("Look", look, Look.presets + listOfNotNull(Look.CUSTOM.takeIf { look == Look.CUSTOM }), { it.label },
                     look.blurb, describe = { it.blurb }) { v -> if (v != Look.CUSTOM) onChange { v.applyTo(it) } }
+                SectionNote("Also in the in-game menu (≡) — change it while you play.")
             }
             Section("Screen") {
                 ChoiceRow("Widescreen", s.widescreen, WidescreenMode.entries, { it.label }, s.widescreen.blurb, describe = { it.blurb }) { v -> onChange { it.copy(widescreen = v) } }
-                if (s.widescreen != WidescreenMode.OFF) {
-                    ChoiceRow("Aspect ratio", s.aspect, AspectPreset.entries, { it.label }) { v -> onChange { it.copy(aspect = v) } }
-                }
                 if (s.widescreen == WidescreenMode.AUTO || s.widescreen == WidescreenMode.PANORAMIC) {
                     ChoiceRow("Menu sides", s.menuSides, MenuSides.entries, { it.label }, describe = { it.blurb }) { v -> onChange { it.copy(menuSides = v) } }
                 }
-                ChoiceRow("Screen fit", s.fit, ScreenFit.entries, { it.label.substringBefore(" (") }, describe = {
-                    when (it) {
-                        ScreenFit.FIT -> "Largest picture that keeps the shape"
-                        ScreenFit.INTEGER -> "Whole-number scaling: perfectly even pixels, may leave borders"
-                        ScreenFit.STRETCH -> "Fills the screen, distorts the picture"
-                    }
-                }) { v -> onChange { it.copy(fit = v) } }
             }
-            Section("Image") {
-                ChoiceRow("Upscaling filter", s.scaling, ScalingFilter.entries, { it.label.substringBefore(" (") }, describe = {
-                    when (it) {
-                        ScalingFilter.NEAREST -> "Sharp, blocky pixels"
-                        ScalingFilter.BILINEAR -> "Soft and smooth (default)"
-                        ScalingFilter.BICUBIC -> "Sharper smoothing (experimental)"
-                        ScalingFilter.LANCZOS3 -> "Sharpest smoothing (experimental)"
-                        ScalingFilter.XBRZ -> "Pixel-art upscaler: rounded, clean edges (experimental)"
+            var fine by rememberSaveable { mutableStateOf(look == Look.CUSTOM) }
+            Section(null) {
+                NavRow("Fine-tune", if (fine) "Hide the detailed options" else "Screen fit, filter, shader, resolution…",
+                    value = if (fine) "▴" else "▾") { fine = !fine }
+            }
+            if (fine) {
+                Section("Fine-tune") {
+                    if (s.widescreen != WidescreenMode.OFF) {
+                        ChoiceRow("Aspect ratio", s.aspect, AspectPreset.entries, { it.label }) { v -> onChange { it.copy(aspect = v) } }
                     }
-                }) { v -> onChange { it.copy(scaling = v) } }
-                if (s.scaling == ScalingFilter.XBRZ) {
-                    SliderRow("xBRZ factor", s.xbrzFactor.toFloat(), 2f..6f, steps = 3, format = { "${it.toInt()}x" }) { v -> onChange { it.copy(xbrzFactor = v.toInt()) } }
+                    ChoiceRow("Screen fit", s.fit, ScreenFit.entries, { it.label.substringBefore(" (") }, describe = {
+                        when (it) {
+                            ScreenFit.FIT -> "Largest picture that keeps the shape"
+                            ScreenFit.INTEGER -> "Whole-number scaling: perfectly even pixels, may leave borders"
+                            ScreenFit.STRETCH -> "Fills the screen, distorts the picture"
+                        }
+                    }) { v -> onChange { it.copy(fit = v) } }
+                    ChoiceRow("Upscaling filter", s.scaling, ScalingFilter.entries, { it.label.substringBefore(" (") }, describe = {
+                        when (it) {
+                            ScalingFilter.NEAREST -> "Sharp, blocky pixels"
+                            ScalingFilter.BILINEAR -> "Soft and smooth"
+                            ScalingFilter.BICUBIC -> "Sharper smoothing (experimental)"
+                            ScalingFilter.LANCZOS3 -> "Sharpest smoothing (experimental)"
+                            ScalingFilter.XBRZ -> "Pixel-art upscaler: rounded, clean edges (experimental)"
+                        }
+                    }) { v -> onChange { it.copy(scaling = v) } }
+                    if (s.scaling == ScalingFilter.XBRZ) {
+                        SliderRow("xBRZ factor", s.xbrzFactor.toFloat(), 2f..6f, steps = 3, format = { "${it.toInt()}x" }) { v -> onChange { it.copy(xbrzFactor = v.toInt()) } }
+                    }
+                    if (s.scaling == ScalingFilter.BICUBIC) {
+                        SliderRow("Bicubic sharpness", s.bicubicSharpness.toFloat(), 0f..100f, format = { "${it.toInt()}" }) { v -> onChange { it.copy(bicubicSharpness = v.toInt()) } }
+                    }
+                    ChoiceRow("Shader", s.shader, listOf("none") + shaders.map { it.id },
+                        { id -> if (id == "none") "None" else shaders.firstOrNull { it.id == id }?.title?.substringBefore(" —") ?: id },
+                        describe = { id -> if (id == "none") "The picture as rendered" else shaders.firstOrNull { it.id == id }?.title?.substringAfter("— ", "") }) { v -> onChange { it.copy(shader = v) } }
+                    if (s.shader != "none") {
+                        SliderRow("Shader intensity", s.shaderIntensity, 0f..2f) { v -> onChange { it.copy(shaderIntensity = v) } }
+                    }
+                    SliderRow("Internal resolution", s.internalResolution, 1f..4f, steps = 5, format = { "%.1fx".format(it) },
+                        subtitle = "Renders larger before scaling to the screen") { v -> onChange { it.copy(internalResolution = v) } }
+                    SwitchRow("Hi-res texture packs", s.hiresTextures, "Loads Hires/ replacements when the game ships them") { v -> onChange { it.copy(hiresTextures = v) } }
                 }
-                if (s.scaling == ScalingFilter.BICUBIC) {
-                    SliderRow("Bicubic sharpness", s.bicubicSharpness.toFloat(), 0f..100f, format = { "${it.toInt()}" }) { v -> onChange { it.copy(bicubicSharpness = v.toInt()) } }
-                }
-                ChoiceRow("Shader", s.shader, listOf("none") + shaders.map { it.id },
-                    { id -> if (id == "none") "None" else shaders.firstOrNull { it.id == id }?.title?.substringBefore(" —") ?: id },
-                    describe = { id -> if (id == "none") "The picture as rendered" else shaders.firstOrNull { it.id == id }?.title?.substringAfter("— ", "") }) { v -> onChange { it.copy(shader = v) } }
-                if (s.shader != "none") {
-                    SliderRow("Shader intensity", s.shaderIntensity, 0f..2f) { v -> onChange { it.copy(shaderIntensity = v) } }
-                }
-                SliderRow("Internal resolution", s.internalResolution, 1f..4f, steps = 5, format = { "%.1fx".format(it) },
-                    subtitle = "Renders larger before scaling to the screen") { v -> onChange { it.copy(internalResolution = v) } }
-                SwitchRow("Hi-res texture packs", s.hiresTextures, "Loads Hires/ replacements when the game ships them") { v -> onChange { it.copy(hiresTextures = v) } }
             }
         }
         SettingsCategory.GAMEPLAY -> {
@@ -156,8 +151,10 @@ fun ColumnScope.SettingsCategoryContent(vm: LibraryViewModel, cat: SettingsCateg
             Section("Map") {
                 SwitchRow("Minimap", s.minimap, "A small map of the area in the top-right corner: walkable ground, water, grass and you") { v -> onChange { it.copy(minimap = v) } }
             }
-            Section(null) {
-                SectionNote("Cheats — shiny odds, no random encounters, walk through walls, money, healing — are in the in-game menu (≡) → Cheats.")
+            Section("Pokémon") {
+                ChoiceRow("Shiny odds", s.shinyOdds, listOf(0, 512, 256, 128), { if (it == 0) "Game default" else "1 in $it" },
+                    "For Pokémon met from now on. Your own Pokémon stay as they are (Pokémon Essentials)",
+                    describe = { if (it == 0) "Whatever the game uses (often 1 in 8192 or 4096)" else "Added on top of the game's own chance" }) { v -> onChange { it.copy(shinyOdds = v) } }
             }
         }
         SettingsCategory.PERFORMANCE -> {
