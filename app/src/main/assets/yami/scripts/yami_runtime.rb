@@ -2262,11 +2262,10 @@ module Yami
     end
 
     def sample_tiles
-      t = @t
       if @sampled == 0
         @borrowed = []
         @strip.dispose if @strip && !@strip.disposed?
-        @strip = Bitmap.new([@order.size * t, t].max, t)
+        @strip = Bitmap.new([@order.size * 4, 4].max, 4)
         @ts_bmp = borrow(:tileset, $game_map.tileset_name)
         @at_bmps = ($game_map.autotile_names || []).map { |n| borrow(:autotile, n) }
       end
@@ -2274,17 +2273,23 @@ module Yami
       (@sampled...stop).each do |i|
         src, rect = tile_source(@order[i])
         next unless src && !src.disposed?
-        @strip.stretch_blt(Rect.new(i * t, 0, t, t), src, rect) rescue nil
+        @strip.stretch_blt(Rect.new(i * 4, 0, 4, 4), src, rect) rescue nil
       end
       @sampled = stop
       return if @sampled < @order.size
       raw = (@strip.raw_data rescue nil)
-      if raw && raw.bytesize >= @order.size * t * t * 4
-        sw = @strip.width
+      if raw && raw.bytesize >= @order.size * 64
+        w = @strip.width
         @order.each_with_index do |id, i|
-          blk = "".b
-          t.times { |yy| blk << raw.byteslice((yy * sw + i * t) * 4, t * 4) }
-          @tiles[id] = blk
+          r = g = b = a = 0
+          4.times do |yy|
+            4.times do |xx|
+              o = (yy * w + i * 4 + xx) * 4
+              pa = raw.getbyte(o + 3)
+              r += raw.getbyte(o) * pa; g += raw.getbyte(o + 1) * pa; b += raw.getbyte(o + 2) * pa; a += pa
+            end
+          end
+          @tiles[id] = a > 0 ? [r / a, g / a, b / a, a / (16 * 255.0)] : nil
         end
       end
       @borrowed.each { |bm| bm.dispose rescue nil }
@@ -2308,8 +2313,8 @@ module Yami
       end
     end
 
-    WALK  = [70, 70, 86]
-    WALL  = [22, 22, 28]
+    WALK  = [96, 96, 112]
+    WALL  = [40, 40, 52]
     WATER = [52, 96, 170]
     GRASS = [52, 112, 70]
 
@@ -2328,40 +2333,30 @@ module Yami
       nil
     end
 
-    # One cell's picture from its layers (bottom up), cached per stack.
-    def stack(ids, walk, look)
-      key = [ids, walk, look]
-      @stacks[key] ||= begin
-        n = @t * @t
-        out = Array.new(n * 3, 0)
-        cov = Array.new(n, false)
-        ids.each do |id|
-          blk = @tiles[id] or next
-          n.times do |p|
-            a = blk.getbyte(p * 4 + 3)
-            next if a < 24
-            k = a / 255.0
-            3.times { |c| out[p * 3 + c] = (out[p * 3 + c] * (1 - k) + blk.getbyte(p * 4 + c) * k) }
-            cov[p] = true
-          end
-        end
-        fill = !walk ? (look == :water ? WATER : WALL) : (look == :water ? WATER : look == :grass ? GRASS : WALK)
-        f = walk ? 1.08 : 0.55                      # walls sink back, paths come forward
-        s = "".b
-        n.times do |p|
-          if cov[p]
-            r, g, b = out[p * 3], out[p * 3 + 1], out[p * 3 + 2]
-            # a little extra colour, then a few levels: reads like a drawing
-            l = (r + g + b) / 3.0
-            r = (l + (r - l) * 1.25) * f; g = (l + (g - l) * 1.25) * f; b = (l + (b - l) * 1.25) * f
-            s << [(r.clamp(0, 255).to_i & 0xF8), (g.clamp(0, 255).to_i & 0xF8), (b.clamp(0, 255).to_i & 0xF8), 255].pack("C4")
-          else
-            s << [fill[0], fill[1], fill[2], 255].pack("C4")
-          end
+    def shade(c, f) = [(c[0] * f).clamp(0, 255).to_i, (c[1] * f).clamp(0, 255).to_i, (c[2] * f).clamp(0, 255).to_i]
+    def px(c) = [c[0], c[1], c[2], 255].pack("C4")
+
+    # A cell as pixel art: one flat colour from the real tiles (snapped to
+    # steps, so neighbouring areas merge into clean shapes) and a small
+    # drawn mark for grass and water. Cached: there are few distinct cells.
+    def cell(col, walk, look)
+      @stacks[[col, walk, look]] ||= begin
+        t = @t
+        base = px(col)
+        s = base * (t * t)
+        put = ->(x, y, c) { s[(y * t + x) * 4, 4] = c if x < t && y < t }
+        if look == :grass
+          d = px(shade(col, 0.72))
+          [[1, 2], [0, 3], [2, 3], [4, 4], [3, 5], [5, 5]].each { |x, y| put.(x * t / 6, y * t / 6, d) }
+        elsif look == :water
+          l = px(shade(col, 1.28))
+          [[1, 1], [2, 1], [3, 4], [4, 4]].each { |x, y| put.(x * t / 6, y * t / 6, l) }
         end
         s
       end
     end
+
+    def snap(v) = ((v.clamp(0, 255) + 12) / 24 * 24).clamp(0, 255).to_i
 
     def compose_rows
       m = $game_map
@@ -2376,11 +2371,18 @@ module Yami
         @w.times do |x|
           walk = true
           look = nil
-          ids = []
-          2.downto(0) do |z|
+          cr = cg = cb = ca = 0.0
+          2.downto(0) do |z|                     # colour: every layer, top down, like the game draws them
             id = data[x, y, z]
             next if id.nil? || id == 0
-            ids.unshift(id)
+            c = @tiles[id] or next
+            next if ca >= 0.97
+            k = (1.0 - ca) * c[3]
+            cr += k * c[0]; cg += k * c[1]; cb += k * c[2]; ca += k
+          end
+          2.downto(0) do |z|                     # walking: the game's own rule
+            id = data[x, y, z]
+            next if id.nil? || id == 0
             tg = tags ? tags[id] : 0
             next if @neutral && tg == @neutral
             look ||= kind(tg)
@@ -2391,7 +2393,16 @@ module Yami
             break if pri[id] == 0
           end
           @walk[y * @w + x] = walk
-          blk = stack(ids, walk, look)
+          col = if ca > 0.05
+                  r, g, b = cr / ca, cg / ca, cb / ca
+                  l = (r + g + b) / 3.0                          # a little more colour
+                  r = l + (r - l) * 1.3; g = l + (g - l) * 1.3; b = l + (b - l) * 1.3
+                  f = walk ? 1.12 : 0.62                         # paths forward, walls back
+                  [snap(r * f), snap(g * f), snap(b * f)]
+                else
+                  !walk ? (look == :water ? WATER : WALL) : (look == :water ? WATER : look == :grass ? GRASS : WALK)
+                end
+          blk = cell(col, walk, look)
           o = (y * t) * stride + x * t * 4
           t.times { |yy| @pix[o + yy * stride, t * 4] = blk.byteslice(yy * t * 4, t * 4) }
         end
@@ -2409,8 +2420,17 @@ module Yami
       stop = [@row + rows_per_frame, @h].min
       (@row...stop).each do |y|
         @w.times do |x|
-          next unless @walk[y * @w + x]
           o = (y * t) * stride + x * t * 4
+          unless @walk[y * @w + x]
+            if y > 0 && @walk[(y - 1) * @w + x]               # light catching the top of a wall
+              t.times do |i|
+                q = o + i * 4
+                r, g, b, a = @pix.byteslice(q, 4).unpack("C4")
+                @pix[q, 4] = [[r + 40, 255].min, [g + 40, 255].min, [b + 40, 255].min, a].pack("C4")
+              end
+            end
+            next
+          end
           up = y > 0 && !@walk[(y - 1) * @w + x]
           if up
             t.times { |i| @pix[o + i * 4, 4] = INK }

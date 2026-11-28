@@ -145,7 +145,7 @@ control({ instant_text: false, minimap: true }.merge(LOOK0).merge(look_scaling: 
 mm = Yami::Minimap
 bmp = mm.instance_variable_get(:@bmp)
 T = mm.instance_variable_get(:@t)
-check "minimap drawn 1:1, every tile a tiny picture", T == 6 && bmp && bmp.raw && bmp.raw.bytesize == (4 * T) * (3 * T) * 4
+check "minimap drawn 1:1 as pixel art, 6 px a tile", T == 6 && bmp && bmp.raw && bmp.raw.bytesize == (4 * T) * (3 * T) * 4
 px = ->(x, y) { bmp.raw[(y * 4 * T + x) * 4, 4].unpack("C4") }
 mid = ->(cx, cy) { px.(cx * T + T / 2, cy * T + T / 2) }
 wall = mid.(0, 0); floor = mid.(1, 1); water = mid.(3, 2)
