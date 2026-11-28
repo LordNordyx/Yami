@@ -2651,5 +2651,10 @@ at_exit do
         else "#{err.class}: #{err.message.to_s[0, 200]}"
         end
   where = err && err.backtrace ? err.backtrace.first(4).join(" < ") : ""
-  Yami.log("game scripts ended: #{how}; scene #{$scene.class}#{where.empty? ? "" : " at #{where}"}") rescue nil
+  line = "#{how}; scene #{$scene.class}#{where.empty? ? "" : " at #{where}"}"
+  Yami.log("game scripts ended: #{line}") rescue nil
+  # straight to the app, before the engine shuts down (the library is back
+  # before the log could be read)
+  f = ENV["YAMI_SELF_EXIT_FILE"]
+  (IO.write(f, line) if f && !f.empty?) rescue nil
 end

@@ -50,6 +50,9 @@ object CrashReports {
             Os.dup2(fd, 2)
         }
         Os.setenv("YAMI_CRASH_FILE", nativeCrash(ctx).absolutePath, true)
+        // the runtime writes the reason here the moment the game's scripts end
+        selfExit(ctx).delete()
+        Os.setenv("YAMI_SELF_EXIT_FILE", selfExit(ctx).absolutePath, true)
 
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -73,6 +76,12 @@ object CrashReports {
     fun collect(ctx: Context): String? {
         val m = marker(ctx)
         if (!m.exists()) return null
+        // The library comes back ~0.5 s before the engine process has finished
+        // shutting down: give a self-exit note or crash file a moment to appear.
+        val until = System.currentTimeMillis() + 2500
+        while (System.currentTimeMillis() < until && m.exists() &&
+            !selfExit(ctx).exists() && !nativeCrash(ctx).exists() && !javaCrash(ctx).exists()) Thread.sleep(100)
+        if (!m.exists()) return null      // the player quit: endSession removed it
         val (gameId, title, started) = (m.readLines() + listOf("", "", "0")).let { Triple(it[0], it[1], it[2].toLongOrNull() ?: 0) }
         m.delete()
 
@@ -81,7 +90,9 @@ object CrashReports {
         val engine = engineLog(ctx).takeIf { it.exists() }?.readLines()?.let(::quiet)?.takeLast(150)?.joinToString("\n")
         val logcat = readLogcat()
         val exit = engineExit(ctx, started)
-        val closedItself = selfExit(ctx).exists().also { selfExit(ctx).delete() }
+        val selfNote = selfExit(ctx).takeIf { it.exists() }?.readText()?.trim()
+        val closedItself = selfNote != null
+        selfExit(ctx).delete()
         val why = engineLog(ctx).takeIf { it.exists() }?.readLines()
             ?.filter { l -> listOf("game scripts ended", "game called", "game asked to start", "unsupported Windows call").any { l.contains(it) } }
             ?.takeLast(12)?.joinToString("\n")
@@ -96,6 +107,7 @@ object CrashReports {
             appendLine(if (closedItself && native == null && java == null) "$title closed itself" else "Yami crash report")
             appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.SUPPORTED_ABIS.joinToString()}")
             appendLine("Game: $title [$gameId] · started ${fmt.format(Date(started))}")
+            selfNote?.takeIf { it.isNotBlank() && it != "1" }?.let { appendLine("\nHow it ended: $it") }
             why?.takeIf { it.isNotBlank() }?.let { appendLine("\n== What the game did =="); appendLine(it) }
             exit?.let { appendLine("\n== Why the game stopped (Android) =="); appendLine(it.first) }
             native?.let { appendLine("\n== Native crash =="); appendLine(it.trim()) }
