@@ -1324,6 +1324,22 @@ index 29b3219..7a224b7 100644
  
  	Scene::composite();
  
+diff --git a/src/eventthread.cpp b/src/eventthread.cpp
+index 82d91ce..b6bd2d9 100644
+--- a/src/eventthread.cpp
++++ b/src/eventthread.cpp
+@@ -512,6 +512,11 @@ void EventThread::process(RGSSThreadData &rtData)
+                         break;
+                         
+                     case REQUEST_TEXTMODE :
++                        /* [yami] games set this every frame: only act on a
++                         * change, or Android re-shows the keyboard each frame
++                         * (and the typed text is cleared). */
++                        if ((event.user.code != 0) == (SDL_IsTextInputActive() == SDL_TRUE))
++                            break;
+                         if (event.user.code)
+                         {
+                             {
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
 index 67c9be0..907f8de 100644
 --- a/src/filesystem/filesystem.cpp
