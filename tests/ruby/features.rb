@@ -145,7 +145,7 @@ control({ instant_text: false, minimap: true }.merge(LOOK0).merge(look_scaling: 
 mm = Yami::Minimap
 bmp = mm.instance_variable_get(:@bmp)
 T = mm.instance_variable_get(:@t)
-check "minimap drawn 1:1 as pixel art, 6 px a tile", T == 6 && bmp && bmp.raw && bmp.raw.bytesize == (4 * T) * (3 * T) * 4
+check "minimap drawn 1:1 as pixel art, 8 px a tile", T == 8 && bmp && bmp.raw && bmp.raw.bytesize == (4 * T) * (3 * T) * 4
 px = ->(x, y) { bmp.raw[(y * 4 * T + x) * 4, 4].unpack("C4") }
 mid = ->(cx, cy) { px.(cx * T + T / 2, cy * T + T / 2) }
 wall = mid.(0, 0); floor = mid.(1, 1); water = mid.(3, 2)
@@ -156,8 +156,8 @@ check "ink line where the floor meets the wall", px.(T, T / 2)[0, 3] == [16, 12,
 check "...and a shadow under it", px.(T / 2, T)[0, 3] == [16, 12, 24] && px.(T / 2, T + 1)[1] < floor[1] * 0.7
 check "borrowed tileset and autotile given back", RPG::Cache::TS.released? && RPG::Cache::AT.released?
 frame = mm.instance_variable_get(:@frame); spr = mm.instance_variable_get(:@sprite); over = mm.instance_variable_get(:@over)
-v = 17 * T
-check "window always the same size (17 x 17 tiles), square", frame.bitmap.width == v + 4 && frame.bitmap.height == v + 4
+v = 13 * T
+check "window always the same size (13 x 13 tiles), square", frame.bitmap.width == v + 4 && frame.bitmap.height == v + 4
 # player at (2,1): the window is centred on them, so the map starts left/above the window's middle
 r = spr.src_rect
 check "map slides under the window, player in the middle", spr.visible && r.x == 0 && r.y == 0 &&

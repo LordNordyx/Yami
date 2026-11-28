@@ -2150,7 +2150,7 @@ module Yami
   # A small map of the current area in the top-right corner: walkable
   # ground, water, grass, the player.
   module Minimap
-    RADIUS = 8              # tiles shown each way from the player: always 17 x 17
+    RADIUS = 6              # tiles shown each way from the player: always 13 x 13
     MARGIN = 8
     CELLS_PER_FRAME = 600   # building work per frame, spread so it never stutters
     INK   = [16, 12, 24, 255].pack("C4")
@@ -2207,7 +2207,7 @@ module Yami
       @data_id = m.data.object_id
       @w = m.width
       @h = m.height
-      @t = @w * @h > 40_000 ? 4 : 6
+      @t = @w * @h > 90_000 ? 6 : 8          # px per tile
       @pix = "\0".b * (@w * @t * @h * @t * 4)
       @walk = Array.new(@w * @h, true)
       @row = 0
