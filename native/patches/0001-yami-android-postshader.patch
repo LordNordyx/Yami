@@ -1775,7 +1775,7 @@ index 834a394..79e3a13 100644
  	bool exists(const char *filename);
  
 diff --git a/src/main.cpp b/src/main.cpp
-index af81d66..95cf26e 100644
+index af81d66..278336a 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -240,7 +240,92 @@ static SDL_Window *initVideo(const Config &conf) {
@@ -1885,6 +1885,21 @@ index af81d66..95cf26e 100644
  
      /* Start event processing */
      eventThread.process(rtData);
+@@ -780,6 +871,14 @@ static SDL_GLContext initGL(SDL_Window *win, Config &conf,
+ 
+   glCtx = SDL_GL_CreateContext(win);
+ 
++  if (!glCtx) {
++    /* [yami] Some drivers (Adreno) refuse debug contexts with EGL_BAD_MATCH:
++     * retry with a plain context before giving up. */
++    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, 0);
++    glCtx = SDL_GL_CreateContext(win);
++    if (glCtx) conf.debugMode = false;
++  }
++
+   if (!glCtx) {
+     GLINIT_SHOWERROR(std::string("Could not create OpenGL context: ") + SDL_GetError());
+     return 0;
 diff --git a/src/meson.build b/src/meson.build
 index 4057c6b..e68be6a 100755
 --- a/src/meson.build

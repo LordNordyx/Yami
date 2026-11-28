@@ -129,6 +129,14 @@ object EngineConfig {
         }
         p(MARKER, true)
         if (s.rgssVersionOverride in 1..3) p("rgssVersion", s.rgssVersionOverride)
+        // Desktop-only switches a developer's own mkxp.json may carry (Xenoverse):
+        // a GL debug context fails on Adreno (EGL_BAD_MATCH); the rest are no use here.
+        p("debugMode", false)
+        p("dumpAtlas", false)
+        p("anyAltToggleFS", false)
+        p("printFPS", false)
+        p("JITEnable", false)
+        p("YJITEnable", false)
         p("fullscreen", true)
         p("winResizable", true)
         p("fixedAspectRatio", s.fit != ScreenFit.STRETCH)
@@ -198,6 +206,8 @@ object EngineConfig {
         } else emptyMap()
 
         val merged = LinkedHashMap(base)
+        // paths from the developer's PC would point nowhere on the phone
+        for (k in listOf("gameFolder", "iconPath")) merged.remove(k)
         for ((k, v) in overrides) {
             val b = base[k]
             merged[k] = if (v is JsonArray && b is JsonArray) JsonArray(v + b)
