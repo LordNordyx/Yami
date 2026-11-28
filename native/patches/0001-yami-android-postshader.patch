@@ -1188,7 +1188,7 @@ index ac5ab55..fcddf11 100644
  	void drawMovieFrame(const THEORAPLAY_VideoFrame* video, Bitmap *videoBitmap);
  	bool updateMovieInput(Movie *movie);
 diff --git a/src/display/tilemap.cpp b/src/display/tilemap.cpp
-index bef8746..9530715 100644
+index bef8746..9ad4c37 100644
 --- a/src/display/tilemap.cpp
 +++ b/src/display/tilemap.cpp
 @@ -67,8 +67,12 @@ static const int atAreaW = autotileW * atFrames;
@@ -1224,7 +1224,19 @@ index bef8746..9530715 100644
  	}
  
  	void updateAtlasInfo()
-@@ -481,6 +487,17 @@ struct TilemapPrivate
+@@ -468,7 +474,10 @@ struct TilemapPrivate
+ 			else
+ 			{
+ 				atlas.smallATs[i] = false;
+-				atlas.nATFrames[i] = autotiles[i]->width()/autotileW;
++				/* Yami: the atlas keeps 8 frames per full autotile; longer
++				 * animations are resampled to 8 when blitted (the shader's
++				 * frame rows only exist for single-tile autotiles). */
++				atlas.nATFrames[i] = std::min(autotiles[i]->width()/autotileW, atFrames);
+ 				if (atlas.nATFrames[i] > 1)
+ 					animatedATs.push_back(i);
+ 			}
+@@ -481,6 +490,17 @@ struct TilemapPrivate
  	{
  		elem.sceneGeo = geo;
  		mapViewportDirty = true;
@@ -1242,7 +1254,23 @@ index bef8746..9530715 100644
  	}
  
  	void invalidateAtlasSize()
-@@ -821,8 +838,8 @@ struct TilemapPrivate
+@@ -593,6 +613,15 @@ struct TilemapPrivate
+ 						                      Vec2i(autotileW*(j % atFrames), atInd*autotileH + 32*(j / atFrames)));
+ 					}
+ 				}
++				else if (atW / autotileW > atFrames)
++				{
++					/* Yami: more frames than fit: take 8 evenly spaced ones,
++					 * so the loop stays seamless instead of reading garbage. */
++					int frames = atW / autotileW;
++					for (int j = 0; j < atFrames; ++j)
++						GLMeta::blitRectangle(IntRect(autotileW * (j * frames / atFrames), 0, autotileW, blitH),
++						                      Vec2i(autotileW * j, atInd*autotileH));
++				}
+ 				else
+ 					GLMeta::blitRectangle(IntRect(0, 0, blitW, blitH),
+ 					                      Vec2i(0, atInd*autotileH));
+@@ -821,8 +850,8 @@ struct TilemapPrivate
  			minY = -oy;
  
  		// There could be off-by-one issues in these couple sections.
@@ -1253,7 +1281,7 @@ index bef8746..9530715 100644
  		if (ox + maxX >= mapW)
  			maxX = mapW - ox - 1;
  		if (oy + maxY >= mapH)
-@@ -1429,3 +1446,11 @@ void Tilemap::releaseResources()
+@@ -1429,3 +1458,11 @@ void Tilemap::releaseResources()
  	delete p;
  	atProxy.p = 0;
  }
