@@ -21,6 +21,7 @@ object CrashReports {
 
     private fun dir(ctx: Context) = File(ctx.filesDir, "logs").apply { mkdirs() }
     fun engineLog(ctx: Context) = File(dir(ctx), "engine.log")
+    private fun previousLog(ctx: Context) = File(dir(ctx), "engine-previous.log")
     fun nativeCrash(ctx: Context) = File(dir(ctx), "native-crash.txt")
     private fun javaCrash(ctx: Context) = File(dir(ctx), "java-crash.txt")
     private fun marker(ctx: Context) = File(dir(ctx), "session-running")
@@ -31,6 +32,8 @@ object CrashReports {
     fun beginSession(ctx: Context, gameId: String, title: String) {
         nativeCrash(ctx).delete()
         javaCrash(ctx).delete()
+        // keep the last run's output: it's usually the one being asked about
+        runCatching { engineLog(ctx).takeIf { it.length() > 0 }?.let { it.copyTo(previousLog(ctx), overwrite = true) } }
         marker(ctx).writeText("$gameId\n$title\n${System.currentTimeMillis()}\n")
         runCatching {
             // Ruby errors, mkxp-z messages and our runtime's prints go to stdout/stderr,
@@ -101,6 +104,10 @@ object CrashReports {
         nativeCrash(ctx).takeIf { it.exists() && it.length() > 0 }?.let { appendLine("\n== Native crash =="); appendLine(it.readText().trim()) }
         appendLine("\n== Engine output ==")
         appendLine(engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(300)?.joinToString("\n")?.ifBlank { null } ?: "(empty)")
+        previousLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(120)?.joinToString("\n")?.takeIf { it.isNotBlank() }?.let {
+            appendLine("\n== Previous run (last lines) ==")
+            appendLine(it)
+        }
         appendLine("\n== System log ==")
         appendLine(readLogcat().trim())
     }

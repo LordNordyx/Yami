@@ -48,6 +48,7 @@ module YamiWin32
     tounicode tounicodeex updatewindow widechartomultibyte writeprivateprofilestring
     getdesktopwindow getfocus getparent getmodulehandle loadlibrary setwindowtext
     setcursorpos systemparametersinfo setfocus
+    shellexecute winexec createprocess
   ].freeze
 
   module_function
@@ -149,6 +150,17 @@ module YamiWin32
     d = (Yami.cfg("save_dir") if defined?(Yami) && Yami.respond_to?(:cfg))
     d = ENV["YAMI_DATA_DIR"] if d.nil? || d.empty?
     d.nil? || d.empty? ? Dir.pwd : d
+  end
+
+  # A game starting its own Game.exe (to restart after changing language or
+  # settings) gets a real restart: the player relaunches it when it exits.
+  def launch(cmd)
+    exe = cmd.to_s.tr("\\", "/")
+    restart = exe =~ /(\A|[\/\s"'])(game|#{Regexp.escape(File.basename(Dir.pwd))})[^\/]*\.exe/i ||
+              exe =~ /\.exe\b/i && exe !~ /notepad|explorer|cmd\.exe|http/i
+    Yami.log("game asked to start: #{exe.strip[0, 120]}#{restart ? " (restart: will relaunch when it exits)" : " (ignored)"}") rescue nil
+    Yami.request_restart if restart && defined?(Yami) && Yami.respond_to?(:request_restart)
+    !!restart
   end
 
   # ------------------------------------------------------------------ calls
@@ -264,6 +276,14 @@ module YamiWin32
     when "getfileattributes" then File.exist?(cstr(args[0])) ? (File.directory?(cstr(args[0])) ? 0x10 : 0x80) : -1
     when "getsystempowerstatus"
       fill(args[0], [1, 0, 100, 0, -1, -1].pack("CCCCll")); 1
+
+    # --- starting programs: only "start the game again" means anything here
+    when "shellexecute"   # (hwnd, verb, file, params, dir, show)
+      launch(cstr(args[2]) + " " + cstr(args[3])) ? 42 : 2
+    when "winexec"        # (cmdline, show)
+      launch(cstr(args[0])) ? 32 : 2
+    when "createprocess"  # (app, cmdline, ...)
+      launch(cstr(args[0]) + " " + cstr(args[1])) ? 1 : 0
     else
       0
     end

@@ -23,6 +23,8 @@ import java.io.File
 object EngineConfig {
     /** Written by the player screen (quick-menu switches), read by the runtime. */
     fun controlFile(runtimeDir: File, gameId: String) = File(runtimeDir, "control-$gameId.txt")
+    /** Written by the runtime when the game starts its own .exe again: relaunch on exit. */
+    fun restartFile(runtimeDir: File, gameId: String) = File(runtimeDir, "restart-$gameId.flag")
 
 
     const val MARKER = "_yami"
@@ -72,6 +74,7 @@ object EngineConfig {
             appendLine("menu_sides=${s.menuSides.name.lowercase()}")
             appendLine("shiny_odds=${s.shinyOdds}")
             appendLine("control_file=${controlFile(runtime.dir, game.id).absolutePath}")
+            appendLine("restart_file=${restartFile(runtime.dir, game.id).absolutePath}")
             appendLine("redirect_saves=${s.redirectSaves && !game.inPlace}")
             appendLine("save_dir=${dataDir.absolutePath}")
             appendLine("status_file=${File(runtime.dir, "status-${game.id}.txt").absolutePath}")

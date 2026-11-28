@@ -59,6 +59,14 @@ module Yami
     STDERR.write(format("[yami %6.2fs] %s\n", t, msg)) rescue nil
   end
 
+  # The game wants to start again (it launched its own Game.exe): the player
+  # relaunches it once this run exits.
+  def request_restart
+    f = cfg("restart_file")
+    IO.write(f, "1") if f && !f.empty?
+  rescue StandardError
+  end
+
   # Tiny status channel to the Android overlay (turbo state etc.).
   def status(key, value)
     @status ||= {}
@@ -2586,3 +2594,34 @@ Yami.on_tick { Yami::Minimap.tick }
 
 Yami.status("turbo", 0)
 Yami.log("runtime #{Yami::VERSION} ready (rgss #{Yami.rgss}, widescreen=#{Yami::Wide.mode})")
+
+
+# A game that ends itself says so in the log (and where), so a game closing
+# itself is never mistaken for a crash. system/spawn/backticks starting the
+# game's own .exe mean "restart".
+module Kernel
+  {
+    exit: "exit", exit!: "exit!", abort: "abort",
+  }.each do |m, label|
+    orig = instance_method(m)
+    define_method(m) do |*a|
+      where = (caller(1, 3) || []).map { |c| c.sub(/:in .*/, "") }.join(" < ")
+      Yami.log("game called #{label}(#{a.map(&:inspect).join(", ")[0, 60]}) at #{where}") rescue nil
+      orig.bind_call(self, *a)
+    end
+    private m
+  end
+  %i[system spawn `].each do |m|
+    next unless private_method_defined?(m) || method_defined?(m)
+    orig = instance_method(m)
+    define_method(m) do |*a, &b|
+      cmd = a.flatten.map(&:to_s).join(" ")
+      if cmd =~ /\.exe\b/i
+        YamiWin32.launch(cmd) if defined?(YamiWin32)
+        next(m == :` ? "" : (m == :spawn ? 0 : true))
+      end
+      orig.bind_call(self, *a, &b)
+    end
+    private m
+  end
+end

@@ -98,6 +98,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             return
         }
         CrashReports.beginSession(this, g.id, g.title)
+        EngineConfig.restartFile(repo.runtimeDir, g.id).delete()
         settings = repo.effectiveSettings(g)
         inputConfig = InputConfig.load(this)
         instantText = settings.instantText
@@ -455,6 +456,18 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     }
 
     override fun onDestroy() {
+        // The game restarted itself (started its own Game.exe, then exited): do it for real.
+        game?.let { g ->
+            val flag = EngineConfig.restartFile(repo.runtimeDir, g.id)
+            if (flag.exists() && isFinishing) {
+                flag.delete()
+                runCatching {
+                    startActivity(Intent(this, MainActivity::class.java)
+                        .putExtra(MainActivity.EXTRA_RELAUNCH, g.id)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                }
+            }
+        }
         recordSession()
         // Reached on a normal exit (game called exit, or we finished); a crash never gets here.
         if (isFinishing) CrashReports.endSession(this)
