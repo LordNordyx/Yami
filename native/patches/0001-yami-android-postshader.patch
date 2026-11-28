@@ -1325,10 +1325,61 @@ index 29b3219..7a224b7 100644
  	Scene::composite();
  
 diff --git a/src/eventthread.cpp b/src/eventthread.cpp
-index 82d91ce..b6bd2d9 100644
+index 82d91ce..5a26cf6 100644
 --- a/src/eventthread.cpp
 +++ b/src/eventthread.cpp
-@@ -512,6 +512,11 @@ void EventThread::process(RGSSThreadData &rtData)
+@@ -85,6 +85,20 @@ initALCFunctions(ALCdevice *alcDev)
+ #define HAVE_ALC_DEVICE_PAUSE alc.DevicePause
+ 
+ uint8_t EventThread::keyStates[];
++
++/* [yami] short-tap key hold (see SDL_KEYUP) */
++#define YAMI_MIN_KEY_MS 60
++static Uint32 yamiKeyDownAt[SDL_NUM_SCANCODES];
++static volatile uint16_t yamiKeyGen[SDL_NUM_SCANCODES];
++static Uint32 SDLCALL yamiReleaseKey(Uint32, void *param)
++{
++    uintptr_t tag = (uintptr_t)param;
++    int sc = (int)(tag & 0xFFFF);
++    uint16_t gen = (uint16_t)(tag >> 16);
++    if (sc >= 0 && sc < SDL_NUM_SCANCODES && yamiKeyGen[sc] == gen)
++        EventThread::keyStates[sc] = false;   /* not pressed again since */
++    return 0;
++}
+ EventThread::ControllerState EventThread::controllerState;
+ EventThread::MouseState EventThread::mouseState;
+ EventThread::TouchState EventThread::touchState;
+@@ -405,6 +419,8 @@ void EventThread::process(RGSSThreadData &rtData)
+                 }
+                 
+                 keyStates[event.key.keysym.scancode] = true;
++                yamiKeyDownAt[event.key.keysym.scancode] = SDL_GetTicks();
++                ++yamiKeyGen[event.key.keysym.scancode];
+                 break;
+                 
+             case SDL_KEYUP :
+@@ -418,7 +434,19 @@ void EventThread::process(RGSSThreadData &rtData)
+                     break;
+                 }
+                 
+-                keyStates[event.key.keysym.scancode] = false;
++                {
++                    /* [yami] The Android soft keyboard sends down+up within a
++                     * millisecond: a game polling once a frame never sees it.
++                     * Keep short taps down for at least 3 frames. */
++                    const int sc = event.key.keysym.scancode;
++                    const Uint32 held = SDL_GetTicks() - yamiKeyDownAt[sc];
++                    if (held < YAMI_MIN_KEY_MS) {
++                        uintptr_t tag = ((uintptr_t)yamiKeyGen[sc] << 16) | (uintptr_t)sc;
++                        SDL_AddTimer(YAMI_MIN_KEY_MS - held, yamiReleaseKey, (void*)tag);
++                        break;
++                    }
++                    keyStates[sc] = false;
++                }
+                 break;
+                 
+             case SDL_CONTROLLERBUTTONDOWN:
+@@ -512,6 +540,11 @@ void EventThread::process(RGSSThreadData &rtData)
                          break;
                          
                      case REQUEST_TEXTMODE :
