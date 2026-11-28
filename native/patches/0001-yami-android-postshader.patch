@@ -1392,7 +1392,7 @@ index 82d91ce..5a26cf6 100644
                          {
                              {
 diff --git a/src/filesystem/filesystem.cpp b/src/filesystem/filesystem.cpp
-index 67c9be0..907f8de 100644
+index 67c9be0..07fb339 100644
 --- a/src/filesystem/filesystem.cpp
 +++ b/src/filesystem/filesystem.cpp
 @@ -32,10 +32,21 @@
@@ -1598,7 +1598,7 @@ index 67c9be0..907f8de 100644
      createPathCache();
  }
  
-@@ -690,3 +829,221 @@ const char *FileSystem::desensitize(const char *filename) {
+@@ -690,3 +829,223 @@ const char *FileSystem::desensitize(const char *filename) {
      return p->pathCache[fn_lower].c_str();
    return filename;
  }
@@ -1651,8 +1651,10 @@ index 67c9be0..907f8de 100644
 +    return (size_t)std::max(0L, strtol(env, 0, 10)) * 1024 * 1024;
 +  long pages = sysconf(_SC_PHYS_PAGES), psize = sysconf(_SC_PAGE_SIZE);
 +  size_t ram = (pages > 0 && psize > 0) ? (size_t)pages * (size_t)psize : (size_t)2048 << 20;
-+  size_t b = ram / 4;
-+  return std::min(b, (size_t)512 << 20);
++  /* [yami] decoded images stay in RAM next to their GPU copies: keep it modest
++   * (huge games like Xenoverse used 322 MB here) */
++  size_t b = ram / 8;
++  return std::min(b, (size_t)192 << 20);
 +}
 +
 +/* Data/ first (map transfers read them), then character graphics */

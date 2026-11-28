@@ -508,7 +508,8 @@ module Yami
     now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     if now - @last_beat >= 10
       @last_beat = now
-      log("alive: frame #{@frames}, #{Graphics.width}x#{Graphics.height}, scene #{sc}")
+      rss = (File.read("/proc/self/status")[/VmRSS:\s+(\d+)/, 1].to_i / 1024 rescue 0)
+      log("alive: frame #{@frames}, #{Graphics.width}x#{Graphics.height}, scene #{sc}#{rss > 0 ? ", memory #{rss} MB" : ""}")
     end
   end
 end

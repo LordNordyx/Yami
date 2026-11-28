@@ -70,8 +70,9 @@ object CrashReports {
         val java = javaCrash(ctx).takeIf { it.exists() }?.readText()
         val engine = engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(150)?.joinToString("\n")
         val logcat = readLogcat()
+        val exit = engineExit(ctx, started)
 
-        val evidence = native != null || java != null ||
+        val evidence = native != null || java != null || exit?.second == true ||
             logcat.contains("Fatal signal") || logcat.contains("FATAL EXCEPTION") ||
             logcat.contains("yami-crash") || (engine?.contains("Error", ignoreCase = false) == true)
         if (!evidence) return null
@@ -81,6 +82,7 @@ object CrashReports {
             appendLine("Yami crash report")
             appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.SUPPORTED_ABIS.joinToString()}")
             appendLine("Game: $title [$gameId] · started ${fmt.format(Date(started))}")
+            exit?.let { appendLine("\n== Why the game stopped (Android) =="); appendLine(it.first) }
             native?.let { appendLine("\n== Native crash =="); appendLine(it.trim()) }
             java?.let { appendLine("\n== Java exception =="); appendLine(it.trim()) }
             engine?.takeIf { it.isNotBlank() }?.let { appendLine("\n== Engine output (last lines) =="); appendLine(it.trim()) }
@@ -95,11 +97,40 @@ object CrashReports {
         appendLine("Yami session log")
         appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         marker(ctx).takeIf { it.exists() }?.readLines()?.getOrNull(1)?.let { appendLine("Game: $it") }
+        engineExit(ctx, 0)?.let { appendLine("\n== Last time the game stopped (Android) =="); appendLine(it.first) }
         nativeCrash(ctx).takeIf { it.exists() && it.length() > 0 }?.let { appendLine("\n== Native crash =="); appendLine(it.readText().trim()) }
         appendLine("\n== Engine output ==")
         appendLine(engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(300)?.joinToString("\n")?.ifBlank { null } ?: "(empty)")
         appendLine("\n== System log ==")
         appendLine(readLogcat().trim())
+    }
+
+    /**
+     * Android's own record of how the engine process ended (API 30+): low
+     * memory, a signal, killed... Catches the deaths that leave no crash file.
+     * @return the description, and whether it was abnormal.
+     */
+    private fun engineExit(ctx: Context, since: Long): Pair<String, Boolean>? {
+        if (Build.VERSION.SDK_INT < 30) return null
+        return runCatching {
+            val am = ctx.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+            val e = am.getHistoricalProcessExitReasons(ctx.packageName, 0, 10)
+                .firstOrNull { it.processName.endsWith(":engine") && it.timestamp >= since } ?: return null
+            val R = android.app.ApplicationExitInfo::class.java
+            val name = R.fields.firstOrNull { f -> f.name.startsWith("REASON_") && runCatching { f.getInt(null) == e.reason }.getOrDefault(false) }
+                ?.name?.removePrefix("REASON_")?.lowercase()?.replace('_', ' ') ?: "reason ${e.reason}"
+            val fmt = SimpleDateFormat("HH:mm:ss", Locale.US)
+            val abnormal = e.reason !in setOf(android.app.ApplicationExitInfo.REASON_EXIT_SELF,
+                android.app.ApplicationExitInfo.REASON_USER_REQUESTED, android.app.ApplicationExitInfo.REASON_USER_STOPPED)
+            val text = buildString {
+                append("$name at ${fmt.format(Date(e.timestamp))}")
+                if (e.status != 0) append(" · status/signal ${e.status}")
+                e.description?.takeIf { it.isNotBlank() }?.let { append(" · $it") }
+                append(" · memory ${e.pss / 1024} MB (PSS), ${e.rss / 1024} MB (RSS)")
+                append(" · importance ${e.importance}")
+            }
+            text to abnormal
+        }.getOrNull()
     }
 
     /** Apps may read their own log lines; both of Yami's processes share a uid. */
