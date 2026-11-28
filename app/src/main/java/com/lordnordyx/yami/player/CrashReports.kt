@@ -102,15 +102,19 @@ object CrashReports {
         marker(ctx).takeIf { it.exists() }?.readLines()?.getOrNull(1)?.let { appendLine("Game: $it") }
         engineExit(ctx, 0)?.let { appendLine("\n== Last time the game stopped (Android) =="); appendLine(it.first) }
         nativeCrash(ctx).takeIf { it.exists() && it.length() > 0 }?.let { appendLine("\n== Native crash =="); appendLine(it.readText().trim()) }
-        appendLine("\n== Engine output ==")
-        appendLine(engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(300)?.joinToString("\n")?.ifBlank { null } ?: "(empty)")
-        previousLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(120)?.joinToString("\n")?.takeIf { it.isNotBlank() }?.let {
+        previousLog(ctx).takeIf { it.exists() }?.readLines()?.let(::quiet)?.takeLast(60)?.joinToString("\n")?.takeIf { it.isNotBlank() }?.let {
             appendLine("\n== Previous run (last lines) ==")
             appendLine(it)
         }
+        appendLine("\n== Engine output ==")
+        appendLine(engineLog(ctx).takeIf { it.exists() }?.readLines()?.let(::quiet)?.takeLast(200)?.joinToString("\n")?.ifBlank { null } ?: "(empty)")
         appendLine("\n== System log ==")
         appendLine(readLogcat().trim())
     }
+
+    /** Without Ruby's harmless redefinition warnings, which bury everything else. */
+    private val noise = Regex("warning: (already initialized constant|previous definition of|key .* is duplicated)")
+    private fun quiet(lines: List<String>) = lines.filterNot { noise.containsMatchIn(it) }
 
     /**
      * Android's own record of how the engine process ended (API 30+): low

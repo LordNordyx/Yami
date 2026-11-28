@@ -156,9 +156,12 @@ module YamiWin32
   # settings) gets a real restart: the player relaunches it when it exits.
   def launch(cmd)
     exe = cmd.to_s.tr("\\", "/")
-    restart = exe =~ /(\A|[\/\s"'])(game|#{Regexp.escape(File.basename(Dir.pwd))})[^\/]*\.exe/i ||
-              exe =~ /\.exe\b/i && exe !~ /notepad|explorer|cmd\.exe|http/i
-    Yami.log("game asked to start: #{exe.strip[0, 120]}#{restart ? " (restart: will relaunch when it exits)" : " (ignored)"}") rescue nil
+    own = ["game"]
+    ini = Dir.glob("*.ini").map { |f| File.basename(f, ".ini").downcase } rescue []
+    own.concat(ini)
+    names = exe.scan(/([^\/\s"']+)\.exe\b/i).flatten.map(&:downcase)
+    restart = names.any? { |n| own.include?(n) }
+    Yami.log("game asked to start: #{exe.strip[0, 160]}#{restart ? " (its own .exe: restart when it exits)" : " (ignored: not the game itself)"}") rescue nil
     Yami.request_restart if restart && defined?(Yami) && Yami.respond_to?(:request_restart)
     !!restart
   end
