@@ -2051,6 +2051,23 @@ index 0000000..97a22d0
 +                      "class variable % "PRIsVALUE" of %"PRIsVALUE" is overtaken by %"PRIsVALUE"",
 + 		       ID2SYM(id), rb_class_name(original_module(front)),
 + 		       rb_class_name(original_module(target)));
+diff --git a/subprojects/packagefiles/ruby-3.1-yami-parse.patch b/subprojects/packagefiles/ruby-3.1-yami-parse.patch
+new file mode 100644
+index 0000000..5067ce7
+--- /dev/null
++++ b/subprojects/packagefiles/ruby-3.1-yami-parse.patch
+@@ -0,0 +1,11 @@
++--- a/parse.y
+++++ b/parse.y
++@@ -1403,7 +1403,7 @@
++ 
++ bodystmt	: compstmt
++ 		  opt_rescue
++-		  k_else {if (!$2) {yyerror1(&@3, "else without rescue is useless");}}
+++		  k_else {if (!$2) {rb_warning0("else without rescue is useless");}} /* [yami] a warning, as before Ruby 2.6 */
++ 		  compstmt
++ 		  opt_ensure
++ 		    {
 diff --git a/subprojects/packagefiles/ruby-3.1/meson.build b/subprojects/packagefiles/ruby-3.1/meson.build
 index 05979e8..c55afbe 100644
 --- a/subprojects/packagefiles/ruby-3.1/meson.build
@@ -2121,14 +2138,15 @@ index 0000000..856c12e
 +         font->line_thickness = FT_FLOOR(FT_MulFix(face->underline_thickness, scale));
 +     } else {
 diff --git a/subprojects/ruby-3.1.wrap b/subprojects/ruby-3.1.wrap
-index 895a43b..5b9a159 100644
+index 895a43b..9e63f70 100644
 --- a/subprojects/ruby-3.1.wrap
 +++ b/subprojects/ruby-3.1.wrap
-@@ -33,4 +33,5 @@ diff_files =
+@@ -33,4 +33,6 @@ diff_files =
      ruby-3.1-mkxp-z-patches.patch,
      ruby-3.1-clock-gettime.patch,
      ruby-3.1-mkxp-z-patches-windows-libs.patch,
 +    ruby-3.1-yami-cvar.patch,
++    ruby-3.1-yami-parse.patch,
      end-of-diff-files.patch
 diff --git a/subprojects/sdl2_ttf.wrap b/subprojects/sdl2_ttf.wrap
 index d2b431f..7219d6c 100644
