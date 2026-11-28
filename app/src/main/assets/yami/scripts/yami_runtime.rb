@@ -2625,3 +2625,15 @@ module Kernel
     private m
   end
 end
+
+# However the game's scripts end (main loop left because $scene became nil,
+# an exception, exit), say how, with the scene and the last error.
+at_exit do
+  err = $!
+  how = if err.nil? then "main loop ended"
+        elsif err.is_a?(SystemExit) then "exit(#{err.status})"
+        else "#{err.class}: #{err.message.to_s[0, 200]}"
+        end
+  where = err && err.backtrace ? err.backtrace.first(4).join(" < ") : ""
+  Yami.log("game scripts ended: #{how}; scene #{$scene.class}#{where.empty? ? "" : " at #{where}"}") rescue nil
+end
