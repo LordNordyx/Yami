@@ -2020,6 +2020,37 @@ index 0000000..0461373
 + oss_dep = dependency(
 +   'oss',
 +   required: get_option('oss'),
+diff --git a/subprojects/packagefiles/ruby-3.1-yami-cvar.patch b/subprojects/packagefiles/ruby-3.1-yami-cvar.patch
+new file mode 100644
+index 0000000..97a22d0
+--- /dev/null
++++ b/subprojects/packagefiles/ruby-3.1-yami-cvar.patch
+@@ -0,0 +1,25 @@
++--- a/vm_insnhelper.c
+++++ b/vm_insnhelper.c
++@@ -1054,7 +1054,9 @@
++ 	cref = CREF_NEXT(cref);
++     }
++     if (top_level_raise && !CREF_NEXT(cref)) {
++-        rb_raise(rb_eRuntimeError, "class variable access from toplevel");
+++        /* [yami] Ruby 1.8-2.7 behaviour: top-level class variables belong to
+++         * Object (old RPG Maker scripts rely on it). */
+++        rb_warning("class variable access from toplevel");
++     }
++ 
++     klass = vm_get_iclass(cfp, CREF_CLASS(cref));
++--- a/variable.c
+++++ b/variable.c
++@@ -3421,7 +3421,8 @@
++ 	st_data_t did = (st_data_t)id;
++ 
++         if (original_module(front) != original_module(target)) {
++-            rb_raise(rb_eRuntimeError,
+++            /* [yami] a warning, as before Ruby 3.0 */
+++            rb_warning(
++                      "class variable % "PRIsVALUE" of %"PRIsVALUE" is overtaken by %"PRIsVALUE"",
++ 		       ID2SYM(id), rb_class_name(original_module(front)),
++ 		       rb_class_name(original_module(target)));
 diff --git a/subprojects/packagefiles/ruby-3.1/meson.build b/subprojects/packagefiles/ruby-3.1/meson.build
 index 05979e8..c55afbe 100644
 --- a/subprojects/packagefiles/ruby-3.1/meson.build
@@ -2089,6 +2120,16 @@ index 0000000..856c12e
 +         underline_offset     = FT_FLOOR(FT_MulFix(face->underline_position, scale));
 +         font->line_thickness = FT_FLOOR(FT_MulFix(face->underline_thickness, scale));
 +     } else {
+diff --git a/subprojects/ruby-3.1.wrap b/subprojects/ruby-3.1.wrap
+index 895a43b..5b9a159 100644
+--- a/subprojects/ruby-3.1.wrap
++++ b/subprojects/ruby-3.1.wrap
+@@ -33,4 +33,5 @@ diff_files =
+     ruby-3.1-mkxp-z-patches.patch,
+     ruby-3.1-clock-gettime.patch,
+     ruby-3.1-mkxp-z-patches-windows-libs.patch,
++    ruby-3.1-yami-cvar.patch,
+     end-of-diff-files.patch
 diff --git a/subprojects/sdl2_ttf.wrap b/subprojects/sdl2_ttf.wrap
 index d2b431f..7219d6c 100644
 --- a/subprojects/sdl2_ttf.wrap
