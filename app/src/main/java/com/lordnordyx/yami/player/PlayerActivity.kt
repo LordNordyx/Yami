@@ -64,6 +64,8 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     private var instantText = false
     private var minimap = false
     private var look = Look.SHARP
+    /** Set when the player (not the game) ended the session: quit, restart. */
+    private var userQuit = false
     private lateinit var inputConfig: InputConfig
     private var optimizeMode = false
 
@@ -407,6 +409,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     /** Closes the engine and starts it again in a fresh process. */
     private fun restart() {
         val id = game?.id ?: return
+        userQuit = true
         recordSession()
         CrashReports.endSession(this)
         startActivity(Intent(this, MainActivity::class.java)
@@ -416,6 +419,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
     }
 
     private fun quitToLibrary() {
+        userQuit = true
         recordSession()
         CrashReports.endSession(this)
         runCatching { SDLActivity.nativeSendQuit() }
@@ -461,6 +465,7 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
             val flag = EngineConfig.restartFile(repo.runtimeDir, g.id)
             if (flag.exists() && isFinishing) {
                 flag.delete()
+                userQuit = true
                 runCatching {
                     startActivity(Intent(this, MainActivity::class.java)
                         .putExtra(MainActivity.EXTRA_RELAUNCH, g.id)
@@ -470,7 +475,10 @@ class PlayerActivity : SDLActivity(), InputManager.InputDeviceListener {
         }
         recordSession()
         // Reached on a normal exit (game called exit, or we finished); a crash never gets here.
-        if (isFinishing) CrashReports.endSession(this)
+        if (isFinishing) {
+            if (userQuit) CrashReports.endSession(this)
+            else CrashReports.markSelfExit(this)     // the game ended itself: tell the library why
+        }
         status?.stop()
         watchdog?.stop()
         runCatching { (getSystemService(INPUT_SERVICE) as InputManager).unregisterInputDeviceListener(this) }

@@ -25,6 +25,12 @@ object CrashReports {
     fun nativeCrash(ctx: Context) = File(dir(ctx), "native-crash.txt")
     private fun javaCrash(ctx: Context) = File(dir(ctx), "java-crash.txt")
     private fun marker(ctx: Context) = File(dir(ctx), "session-running")
+    private fun selfExit(ctx: Context) = File(dir(ctx), "self-exit")
+
+    /** The game's own scripts ended the session (not the player): report it like a crash. */
+    fun markSelfExit(ctx: Context) {
+        runCatching { selfExit(ctx).writeText("1") }
+    }
     fun lastReport(ctx: Context) = File(dir(ctx), "last-crash-report.txt")
 
     // ------------------------------------------------------- engine process
@@ -55,6 +61,7 @@ object CrashReports {
     /** The game ended normally (quit, exit from the game, finish). */
     fun endSession(ctx: Context) {
         marker(ctx).delete()
+        selfExit(ctx).delete()
     }
 
     // ------------------------------------------------------ library process
@@ -71,20 +78,25 @@ object CrashReports {
 
         val native = nativeCrash(ctx).takeIf { it.exists() && it.length() > 0 }?.readText()
         val java = javaCrash(ctx).takeIf { it.exists() }?.readText()
-        val engine = engineLog(ctx).takeIf { it.exists() }?.readLines()?.takeLast(150)?.joinToString("\n")
+        val engine = engineLog(ctx).takeIf { it.exists() }?.readLines()?.let(::quiet)?.takeLast(150)?.joinToString("\n")
         val logcat = readLogcat()
         val exit = engineExit(ctx, started)
+        val closedItself = selfExit(ctx).exists().also { selfExit(ctx).delete() }
+        val why = engineLog(ctx).takeIf { it.exists() }?.readLines()
+            ?.filter { l -> listOf("game scripts ended", "game called", "game asked to start", "unsupported Windows call").any { l.contains(it) } }
+            ?.takeLast(12)?.joinToString("\n")
 
-        val evidence = native != null || java != null || exit?.second == true ||
+        val evidence = closedItself || native != null || java != null || exit?.second == true ||
             logcat.contains("Fatal signal") || logcat.contains("FATAL EXCEPTION") ||
             logcat.contains("yami-crash") || (engine?.contains("Error", ignoreCase = false) == true)
         if (!evidence) return null
 
         val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val report = buildString {
-            appendLine("Yami crash report")
+            appendLine(if (closedItself && native == null && java == null) "$title closed itself" else "Yami crash report")
             appendLine("App ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · ${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT}) · ${Build.SUPPORTED_ABIS.joinToString()}")
             appendLine("Game: $title [$gameId] · started ${fmt.format(Date(started))}")
+            why?.takeIf { it.isNotBlank() }?.let { appendLine("\n== What the game did =="); appendLine(it) }
             exit?.let { appendLine("\n== Why the game stopped (Android) =="); appendLine(it.first) }
             native?.let { appendLine("\n== Native crash =="); appendLine(it.trim()) }
             java?.let { appendLine("\n== Java exception =="); appendLine(it.trim()) }

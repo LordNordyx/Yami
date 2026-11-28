@@ -330,8 +330,18 @@ class Win32API
     @fast = FAST[@name]
   end
 
+  UNHANDLED = {}
+
   def call(*args)
-    @fast ? @fast.call(args) : YamiWin32.call(@name, args)
+    return @fast.call(args) if @fast
+    unless KNOWN_SET[@name] || UNHANDLED[@name]
+      # Windows calls with no Android meaning answer 0: say which, and from where,
+      # once each (a game giving up on one of these is the usual "it just closed")
+      UNHANDLED[@name] = true
+      at = (caller(1, 1) || []).first.to_s.sub(/:in .*/, "")
+      Yami.log("unsupported Windows call #{@dll}!#{@func}(#{args.map { |a| a.is_a?(String) ? a[0, 40].inspect : a.inspect }.join(", ")[0, 120]}) -> 0, at #{at}") rescue nil
+    end
+    YamiWin32.call(@name, args)
   end
   alias Call call
 end

@@ -2611,6 +2611,22 @@ module Kernel
     end
     private m
   end
+end
+
+# Kernel.exit / Process.exit (the module forms) as well
+[Kernel, Process].each do |mod|
+  %i[exit exit! abort].each do |m|
+    next unless mod.respond_to?(m)
+    orig = mod.method(m)
+    mod.define_singleton_method(m) do |*a|
+      where = (caller(1, 3) || []).map { |c| c.sub(/:in .*/, "") }.join(" < ")
+      Yami.log("game called #{mod}.#{m}(#{a.map(&:inspect).join(", ")[0, 60]}) at #{where}") rescue nil
+      orig.call(*a)
+    end
+  end
+end
+
+module Kernel
   %i[system spawn `].each do |m|
     next unless private_method_defined?(m) || method_defined?(m)
     orig = instance_method(m)

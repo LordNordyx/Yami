@@ -28,7 +28,11 @@ fun CrashDialog(report: String?, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (report.startsWith("Yami crash report")) "The game crashed" else "Yami log") },
+        title = { Text(when {
+            report.startsWith("Yami crash report") -> "The game crashed"
+            report.lineSequence().first().endsWith(" closed itself") -> report.lineSequence().first()
+            else -> "Yami log"
+        }) },
         text = {
             Column {
                 Text("Copy or share this so the problem can be fixed.",
