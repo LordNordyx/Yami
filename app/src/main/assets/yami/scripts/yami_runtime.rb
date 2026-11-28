@@ -2150,8 +2150,11 @@ module Yami
   # A small map of the current area in the top-right corner: walkable
   # ground, water, grass, the player.
   module Minimap
-    MAX = 132          # longest side on screen, px
-    ROWS_PER_FRAME = 24
+    RADIUS = 8              # tiles shown each way from the player: always 17 x 17
+    MARGIN = 8
+    CELLS_PER_FRAME = 600   # building work per frame, spread so it never stutters
+    INK   = [16, 12, 24, 255].pack("C4")
+    PAPER = Color.new(8, 8, 12, 215)
     module_function
 
     def screen_w
@@ -2167,14 +2170,15 @@ module Yami
       true
     end
 
+    def sprites = [@frame, @sprite, @over]
+
     def tick
       unless visible_now?
-        @sprite.visible = false if @sprite && !@sprite.disposed?
-        @dot.visible = false if @dot && !@dot.disposed?
+        sprites.each { |s| s.visible = false if s && !s.disposed? }
         return
       end
       build_start if @map_id != $game_map.map_id || @data_id != $game_map.data.object_id
-      build_rows if @building
+      build_step if @building
       show
     rescue StandardError => e
       Yami.log("minimap: #{e.class}: #{e.message}") unless @logged
@@ -2191,37 +2195,44 @@ module Yami
       @vp
     end
 
-    # Built in phases over several frames: scan the map for the tiles it
-    # uses; shrink each tile to 4x4 on the GPU into one strip and read it
-    # back once (average colour per tile); colour each cell by blending its
-    # layers top-down like the game draws them; walls a little darker.
+    # The whole map is drawn once, 1:1, every tile a tiny copy of the real
+    # one (6x6, or 4x4 on huge maps): the tiles the map uses are shrunk on
+    # the GPU into one strip and read back once; each stack of layers is
+    # composed once per distinct stack; walls are dimmed; ink lines trace
+    # where you can and can't walk, with a soft shadow under walls.
+    # The window then just slides over it, following the player.
     def build_start
       m = $game_map
       @map_id = m.map_id
       @data_id = m.data.object_id
       @w = m.width
       @h = m.height
-      @scale = [[MAX / [@w, @h].max, 1].max, 4].min
-      @pix = "\0".b * (@w * @h * 4)
+      @t = @w * @h > 40_000 ? 4 : 6
+      @pix = "\0".b * (@w * @t * @h * @t * 4)
+      @walk = Array.new(@w * @h, true)
       @row = 0
       @ids = {}
-      @pal = {}
+      @tiles = {}
+      @stacks = {}
       @phase = :scan
       @building = true
       @neutral = (defined?(::PBTerrain) && ::PBTerrain.const_defined?(:Neutral)) ? ::PBTerrain::Neutral : nil
     end
 
-    def build_rows
+    def build_step
       case @phase
       when :scan then scan_rows
       when :sample then sample_tiles
       when :compose then compose_rows
+      when :ink then ink_rows
       end
     end
 
+    def rows_per_frame = [CELLS_PER_FRAME / [@w, 1].max, 1].max
+
     def scan_rows
       data = $game_map.data
-      stop = [@row + ROWS_PER_FRAME * 2, @h].min
+      stop = [@row + rows_per_frame * 3, @h].min
       (@row...stop).each do |y|
         @w.times do |x|
           3.times do |z|
@@ -2251,35 +2262,29 @@ module Yami
     end
 
     def sample_tiles
+      t = @t
       if @sampled == 0
         @borrowed = []
         @strip.dispose if @strip && !@strip.disposed?
-        @strip = Bitmap.new([@order.size * 4, 4].max, 4)
+        @strip = Bitmap.new([@order.size * t, t].max, t)
         @ts_bmp = borrow(:tileset, $game_map.tileset_name)
         @at_bmps = ($game_map.autotile_names || []).map { |n| borrow(:autotile, n) }
       end
       stop = [@sampled + 96, @order.size].min
       (@sampled...stop).each do |i|
-        id = @order[i]
-        src, rect = tile_source(id)
+        src, rect = tile_source(@order[i])
         next unless src && !src.disposed?
-        @strip.stretch_blt(Rect.new(i * 4, 0, 4, 4), src, rect) rescue nil
+        @strip.stretch_blt(Rect.new(i * t, 0, t, t), src, rect) rescue nil
       end
       @sampled = stop
       return if @sampled < @order.size
       raw = (@strip.raw_data rescue nil)
-      if raw && raw.bytesize >= @order.size * 64
-        w = @strip.width
+      if raw && raw.bytesize >= @order.size * t * t * 4
+        sw = @strip.width
         @order.each_with_index do |id, i|
-          r = g = b = a = 0
-          4.times do |yy|
-            4.times do |xx|
-              o = (yy * w + i * 4 + xx) * 4
-              pa = raw.getbyte(o + 3)
-              r += raw.getbyte(o) * pa; g += raw.getbyte(o + 1) * pa; b += raw.getbyte(o + 2) * pa; a += pa
-            end
-          end
-          @pal[id] = a > 0 ? [r / a, g / a, b / a, a / (16 * 255.0)] : [0, 0, 0, 0.0]
+          blk = "".b
+          t.times { |yy| blk << raw.byteslice((yy * sw + i * t) * 4, t * 4) }
+          @tiles[id] = blk
         end
       end
       @borrowed.each { |bm| bm.dispose rescue nil }
@@ -2303,10 +2308,10 @@ module Yami
       end
     end
 
-    WALK = [70, 70, 86, 235].pack("C4")
-    WALL = [14, 14, 18, 200].pack("C4")
-    WATER = [52, 96, 170, 240].pack("C4")
-    GRASS = [52, 112, 70, 240].pack("C4")
+    WALK  = [70, 70, 86]
+    WALL  = [22, 22, 28]
+    WATER = [52, 96, 170]
+    GRASS = [52, 112, 70]
 
     def kind(tag)
       return nil if tag.nil? || tag == 0
@@ -2323,42 +2328,101 @@ module Yami
       nil
     end
 
+    # One cell's picture from its layers (bottom up), cached per stack.
+    def stack(ids, walk, look)
+      key = [ids, walk, look]
+      @stacks[key] ||= begin
+        n = @t * @t
+        out = Array.new(n * 3, 0)
+        cov = Array.new(n, false)
+        ids.each do |id|
+          blk = @tiles[id] or next
+          n.times do |p|
+            a = blk.getbyte(p * 4 + 3)
+            next if a < 24
+            k = a / 255.0
+            3.times { |c| out[p * 3 + c] = (out[p * 3 + c] * (1 - k) + blk.getbyte(p * 4 + c) * k) }
+            cov[p] = true
+          end
+        end
+        fill = !walk ? (look == :water ? WATER : WALL) : (look == :water ? WATER : look == :grass ? GRASS : WALK)
+        f = walk ? 1.08 : 0.55                      # walls sink back, paths come forward
+        s = "".b
+        n.times do |p|
+          if cov[p]
+            r, g, b = out[p * 3], out[p * 3 + 1], out[p * 3 + 2]
+            # a little extra colour, then a few levels: reads like a drawing
+            l = (r + g + b) / 3.0
+            r = (l + (r - l) * 1.25) * f; g = (l + (g - l) * 1.25) * f; b = (l + (b - l) * 1.25) * f
+            s << [(r.clamp(0, 255).to_i & 0xF8), (g.clamp(0, 255).to_i & 0xF8), (b.clamp(0, 255).to_i & 0xF8), 255].pack("C4")
+          else
+            s << [fill[0], fill[1], fill[2], 255].pack("C4")
+          end
+        end
+        s
+      end
+    end
+
     def compose_rows
       m = $game_map
       data = m.data
       pas = m.passages
       pri = m.priorities
       tags = m.terrain_tags
-      stop = [@row + ROWS_PER_FRAME, @h].min
+      t = @t
+      stride = @w * t * 4
+      stop = [@row + rows_per_frame, @h].min
       (@row...stop).each do |y|
         @w.times do |x|
           walk = true
           look = nil
-          cr = cg = cb = 0.0
-          ca = 0.0
+          ids = []
           2.downto(0) do |z|
             id = data[x, y, z]
             next if id.nil? || id == 0
-            t = tags ? tags[id] : 0
-            if (c = @pal[id]) && ca < 0.95
-              k = (1.0 - ca) * c[3]
-              cr += k * c[0]; cg += k * c[1]; cb += k * c[2]; ca += k
-            end
-            next if @neutral && t == @neutral
-            look ||= kind(t)
+            ids.unshift(id)
+            tg = tags ? tags[id] : 0
+            next if @neutral && tg == @neutral
+            look ||= kind(tg)
             if (pas[id] & 0x0f) == 0x0f
               walk = false
               break
             end
-            break if pri[id] == 0 && ca >= 0.95
+            break if pri[id] == 0
           end
-          px = if ca > 0.05
-                 f = (walk ? 1.12 : 0.55) / ca                 # brighten a little; darken walls
-                 [(cr * f).clamp(0, 255).to_i, (cg * f).clamp(0, 255).to_i, (cb * f).clamp(0, 255).to_i, walk ? 240 : 225].pack("C4")
-               else
-                 !walk ? (look == :water ? WATER : WALL) : (look == :water ? WATER : look == :grass ? GRASS : WALK)
-               end
-          @pix[(y * @w + x) * 4, 4] = px
+          @walk[y * @w + x] = walk
+          blk = stack(ids, walk, look)
+          o = (y * t) * stride + x * t * 4
+          t.times { |yy| @pix[o + yy * stride, t * 4] = blk.byteslice(yy * t * 4, t * 4) }
+        end
+      end
+      @row = stop
+      return if @row < @h
+      @row = 0
+      @phase = :ink
+    end
+
+    # Ink where walkable meets blocked; a soft shadow under the wall above.
+    def ink_rows
+      t = @t
+      stride = @w * t * 4
+      stop = [@row + rows_per_frame, @h].min
+      (@row...stop).each do |y|
+        @w.times do |x|
+          next unless @walk[y * @w + x]
+          o = (y * t) * stride + x * t * 4
+          up = y > 0 && !@walk[(y - 1) * @w + x]
+          if up
+            t.times { |i| @pix[o + i * 4, 4] = INK }
+            t.times do |i|                               # second row: shadow
+              q = o + stride + i * 4
+              r, g, b, a = @pix.byteslice(q, 4).unpack("C4")
+              @pix[q, 4] = [r * 3 / 5, g * 3 / 5, b * 3 / 5, a].pack("C4")
+            end
+          end
+          t.times { |i| @pix[o + (t - 1) * stride + i * 4, 4] = INK } if y + 1 < @h && !@walk[(y + 1) * @w + x]
+          t.times { |i| @pix[o + i * stride, 4] = INK } if x > 0 && !@walk[y * @w + x - 1]
+          t.times { |i| @pix[o + i * stride + (t - 1) * 4, 4] = INK } if x + 1 < @w && !@walk[y * @w + x + 1]
         end
       end
       @row = stop
@@ -2368,51 +2432,130 @@ module Yami
     def finish
       @building = false
       @phase = nil
+      @stacks = {}
+      @tiles = {}
       @bmp.dispose if @bmp && !@bmp.disposed?
-      @bmp = Bitmap.new(@w, @h)
+      bw = @w * @t
+      bh = @h * @t
+      @bmp = Bitmap.new(bw, bh)
       if @bmp.respond_to?(:raw_data=)
         @bmp.raw_data = @pix
       else
-        @h.times do |y|                              # runs of one colour per call
+        bh.times do |y|                              # runs of one colour per call
           x = 0
-          while x < @w
-            c = @pix[(y * @w + x) * 4, 4]
+          while x < bw
+            c = @pix[(y * bw + x) * 4, 4]
             x2 = x
-            x2 += 1 while x2 + 1 < @w && @pix[(y * @w + x2 + 1) * 4, 4] == c
+            x2 += 1 while x2 + 1 < bw && @pix[(y * bw + x2 + 1) * 4, 4] == c
             r, g, b, al = c.unpack("C4")
             @bmp.fill_rect(x, y, x2 - x + 1, 1, Color.new(r, g, b, al))
             x = x2 + 1
           end
         end
       end
-      @sprite ||= Sprite.new(viewport)
+      @pix = nil
+      make_sprites
       @sprite.bitmap = @bmp
-      @sprite.zoom_x = @sprite.zoom_y = @scale
-      @sprite.opacity = 235
-      unless @dot && !@dot.disposed?
-        @dot = Sprite.new(viewport)
-        db = Bitmap.new(4, 4)
-        db.fill_rect(0, 0, 4, 4, Color.new(255, 255, 255))
-        @dot.bitmap = db
-        @dot.z = 2
+    end
+
+    def view = (2 * RADIUS + 1) * @t
+
+    def make_sprites
+      v = view
+      if @frame.nil? || @frame.disposed? || @frame.bitmap.width != v + 4
+        sprites.each { |s| s.dispose if s && !s.disposed? }
+        @frame = Sprite.new(viewport)
+        fb = Bitmap.new(v + 4, v + 4)
+        fb.fill_rect(0, 0, v + 4, v + 4, Color.new(0, 0, 0, 170))           # ink border
+        fb.fill_rect(1, 1, v + 2, v + 2, Color.new(255, 255, 255, 60))      # glass edge
+        fb.fill_rect(2, 2, v, v, PAPER)
+        [[0, 0], [v + 3, 0], [0, v + 3], [v + 3, v + 3]].each { |cx, cy| fb.fill_rect(cx, cy, 1, 1, Color.new(0, 0, 0, 0)) }
+        @frame.bitmap = fb
+        @frame.z = 0
+        @sprite = Sprite.new(viewport)
+        @sprite.z = 1
+        @over = Sprite.new(viewport)
+        @over.bitmap = Bitmap.new(v, v)
+        @over.z = 2
+      end
+    end
+
+    def tile_pos(ch)
+      if ch.respond_to?(:real_x) && ch.real_x
+        [ch.real_x / 128.0, ch.real_y / 128.0]
+      else
+        [ch.x.to_f, ch.y.to_f]
       end
     end
 
     def show
       return unless @sprite && !@sprite.disposed? && @sprite.bitmap
-      margin = 10
-      @sprite.x = screen_w - @w * @scale - margin
-      @sprite.y = margin
-      @sprite.visible = true
+      t = @t
+      v = view
+      fx = screen_w - v - 4 - MARGIN
+      fy = MARGIN
+      @frame.x = fx; @frame.y = fy; @frame.visible = true
+      px, py = tile_pos($game_player)
+      left = ((px + 0.5) * t - v / 2.0).round
+      top = ((py + 0.5) * t - v / 2.0).round
+      sx = [left, 0].max; sy = [top, 0].max
+      ex = [left + v, @w * t].min; ey = [top + v, @h * t].min
+      if ex > sx && ey > sy
+        @sprite.src_rect = Rect.new(sx, sy, ex - sx, ey - sy)
+        @sprite.x = fx + 2 + (sx - left)
+        @sprite.y = fy + 2 + (sy - top)
+        @sprite.visible = true
+      else
+        @sprite.visible = false
+      end
+      draw_marks(px, py) if (Yami.frame_no % 3) == 0 || !@over.visible
+      @over.x = fx + 2; @over.y = fy + 2; @over.visible = true
+    end
+
+    # NPCs as warm dots, the player as an arrow pointing where they face.
+    def draw_marks(px, py)
+      b = @over.bitmap
+      b.clear
+      t = @t
+      v = view
+      half = v / 2.0
+      evs = ($game_map.events rescue nil) || {}
+      dot = Color.new(255, 214, 120)
+      evs.each_value do |ev|
+        next if (ev.character_name.to_s.empty? rescue true)
+        next if ev.instance_variable_get(:@erased)
+        ex, ey = tile_pos(ev)
+        cx = (half + (ex - px) * t).round
+        cy = (half + (ey - py) * t).round
+        next if cx < 1 || cy < 1 || cx > v - 2 || cy > v - 2
+        b.fill_rect(cx - 1, cy - 1, 3, 3, Color.new(0, 0, 0, 200))
+        b.fill_rect(cx, cy, 1, 1, dot)
+        b.fill_rect(cx - 1, cy, 3, 1, dot); b.fill_rect(cx, cy - 1, 1, 3, dot)
+      end
       blink = (Yami.frame_no / 20) % 2 == 0
-      d = [@scale, 3].max
-      @dot.zoom_x = @dot.zoom_y = d / 4.0
-      @dot.x = @sprite.x + $game_player.x * @scale + (@scale - d) / 2.0
-      @dot.y = @sprite.y + $game_player.y * @scale + (@scale - d) / 2.0
-      @dot.opacity = blink ? 255 : 170
-      @dot.visible = true
+      arrow(b, half.floor, half.floor, ($game_player.direction rescue 2), Color.new(255, 255, 255, blink ? 255 : 200))
+    end
+
+    # a 5-wide, 3-tall arrowhead, outlined in ink
+    def arrow(b, cx, cy, dir, col)
+      ink = Color.new(0, 0, 0, 220)
+      [[-1, 0], [1, 0], [0, -1], [0, 1]].each { |dx, dy| arrow_shape(b, cx + dx, cy + dy, dir, ink) }
+      arrow_shape(b, cx, cy, dir, col)
+    end
+
+    def arrow_shape(b, cx, cy, dir, c)
+      3.times do |i|                       # i = 0 at the tip
+        w = 1 + 2 * i
+        case dir
+        when 8 then b.fill_rect(cx - i, cy - 1 + i, w, 1, c)
+        when 4 then b.fill_rect(cx - 1 + i, cy - i, 1, w, c)
+        when 6 then b.fill_rect(cx + 1 - i, cy - i, 1, w, c)
+        else        b.fill_rect(cx - i, cy + 1 - i, w, 1, c)
+        end
+      end
     end
   end
+
 end
 
 Yami.on_tick { Yami::Features.tick }

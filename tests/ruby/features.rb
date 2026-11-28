@@ -144,18 +144,28 @@ check "Look applied live: sharp pixels, pixel perfect, LCD3x", log.include?([:sc
 control({ instant_text: false, minimap: true }.merge(LOOK0).merge(look_scaling: 0, look_integer: true, look_shader: "/rt/shaders/lcd3x.frag")); frames(20)
 mm = Yami::Minimap
 bmp = mm.instance_variable_get(:@bmp)
-check "minimap built from the map (raw pixels)", bmp && bmp.raw && bmp.raw.bytesize == 4 * 3 * 4
-wall = bmp.raw[0, 4].unpack("C4"); floor = bmp.raw[4, 4].unpack("C4"); water = bmp.raw[(2 * 4 + 3) * 4, 4].unpack("C4")
+T = mm.instance_variable_get(:@t)
+check "minimap drawn 1:1, every tile a tiny picture", T == 6 && bmp && bmp.raw && bmp.raw.bytesize == (4 * T) * (3 * T) * 4
+px = ->(x, y) { bmp.raw[(y * 4 * T + x) * 4, 4].unpack("C4") }
+mid = ->(cx, cy) { px.(cx * T + T / 2, cy * T + T / 2) }
+wall = mid.(0, 0); floor = mid.(1, 1); water = mid.(3, 2)
 check "minimap in the map's own colours: green floor", floor[1] > floor[0] && floor[1] > floor[2] && floor[1] > 150
 check "...a darker brown wall", wall[0] > wall[2] && wall[0] < 120
 check "...blue water", water[2] > water[0] && water[2] > 150
+check "ink line where the floor meets the wall", px.(T, T / 2)[0, 3] == [16, 12, 24]
+check "...and a shadow under it", px.(T / 2, T)[0, 3] == [16, 12, 24] && px.(T / 2, T + 1)[1] < floor[1] * 0.7
 check "borrowed tileset and autotile given back", RPG::Cache::TS.released? && RPG::Cache::AT.released?
-dot = mm.instance_variable_get(:@dot); spr = mm.instance_variable_get(:@sprite)
-sc = mm.instance_variable_get(:@scale)
-p [dot.x, spr.x, sc, dot.visible]
-check "player dot on the player's tile", dot.visible && dot.x >= spr.x + 2 * sc - sc && dot.x <= spr.x + 3 * sc
+frame = mm.instance_variable_get(:@frame); spr = mm.instance_variable_get(:@sprite); over = mm.instance_variable_get(:@over)
+v = 17 * T
+check "window always the same size (17 x 17 tiles), square", frame.bitmap.width == v + 4 && frame.bitmap.height == v + 4
+# player at (2,1): the window is centred on them, so the map starts left/above the window's middle
+r = spr.src_rect
+check "map slides under the window, player in the middle", spr.visible && r.x == 0 && r.y == 0 &&
+  spr.x - (frame.x + 2) == (v / 2.0 - 2.5 * T).round && spr.y - (frame.y + 2) == (v / 2.0 - 1.5 * T).round
+check "marks layer on top", over.visible && over.z > spr.z
+dot = over; sc = T
 $scene = Object.new; frames(1)
-check "hidden outside the map scene", !spr.visible && !dot.visible
+check "hidden outside the map scene", !spr.visible && !over.visible && !frame.visible
 
 puts($fails.zero? ? "ALL PASS" : "#{$fails} FAILED")
 exit($fails.zero? ? 0 : 1)
